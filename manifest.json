@@ -1,0 +1,16 @@
+{
+  "name": "Seafarer Nav",
+  "short_name": "Seafarer",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0b132b",
+  "theme_color": "#5bc0be",
+  "description": "Professionele Navigatie voor de Seafarer",
+  "icons": [
+    {
+      "src": "image_0.png",
+      "sizes": "400x400",
+      "type": "image/png"
+    }
+  ]
+}
