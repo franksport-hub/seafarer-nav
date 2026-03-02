@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v3.3</title>
+    <title>Seafarer Nav v3.4</title>
     
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" href="image_0.png">
@@ -36,7 +36,7 @@
 
     <div id="planner-panel" class="panel">
         <div class="panel-header" onclick="togglePanel()">
-            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.3</span>
+            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.4</span>
             <span id="min-icon">_</span>
         </div>
         <div id="panel-content">
@@ -56,6 +56,7 @@
 
             <button class="btn btn-monitor" id="monitorBtn" onclick="toggleMonitoring()" style="margin-top:10px;">📡 Start Monitoring</button>
             <div id="wake-info" class="wake-status">Scherm: Normaal</div>
+            <button class="btn" id="aisBtn" style="background:#3a506b; color:white;" onclick="toggleAIS()">🚢 Toon AIS Schepen</button>
             <button class="btn" style="background:#5bc0be; color:#0b132b;" onclick="exportToRTZ()">📥 Exporteer .RTZ</button>
         </div>
     </div>
@@ -72,30 +73,24 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         // --- PWA SERVICE WORKER ---
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(err => console.log('SW mislukt', err));
-        }
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(err => console.log('SW mislukt', err)); }
 
-        // --- WAKE LOCK (Scherm Actief Houden) ---
+        // --- WAKE LOCK ---
         let wakeLock = null;
         async function requestWakeLock() {
             try {
                 wakeLock = await navigator.wakeLock.request('screen');
                 document.getElementById('wake-info').innerText = "Scherm: Altijd Actief ✅";
-                wakeLock.addEventListener('release', () => {
-                    document.getElementById('wake-info').innerText = "Scherm: Normaal";
-                });
-            } catch (err) {
-                document.getElementById('wake-info').innerText = "Scherm: Lock mislukt";
-            }
+            } catch (err) { console.log("WakeLock mislukt"); }
         }
 
-        // --- BASIS KAART & VARIABELEN ---
+        // --- BASIS KAART ---
         var map = L.map('map', { zoomControl: false, center: [53.5, 8.5], zoom: 8 });
         var waypoints = [], markers = [], routeSegments = [], touchSegments = [];
         var isMonitoring = false, shipMarker = null, watchId = null, hasCompass = false, dynamicNavLine = null;
         var routesDB = JSON.parse(localStorage.getItem('seafarer_routes_db')) || {};
-        var pinnedPixel = null; // Voor de relatieve beweging
+        var pinnedPixel = null;
+        var aisLayer = null, isAisVisible = false;
 
         const layers = {
             osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }),
@@ -121,131 +116,57 @@
             iconSize: [40, 40], iconAnchor: [20, 20]
         });
 
-        // --- ROUTE MAKEN ---
-        map.on('contextmenu', function(e) {
-            addWaypoint(e.latlng.lat, e.latlng.lng);
-        });
+        // --- ROUTE & WAYPOINTS ---
+        map.on('contextmenu', e => addWaypoint(e.latlng.lat, e.latlng.lng));
 
-        function addWaypoint(lat, lng, index = null) {
-            let newWp = {lat: lat, lng: lng, note: ""};
-            if (index !== null) waypoints.splice(index, 0, newWp);
-            else waypoints.push(newWp);
+        function addWaypoint(lat, lng, idx = null) {
+            let nw = {lat, lng, note: ""};
+            if (idx !== null) waypoints.splice(idx, 0, nw); else waypoints.push(nw);
             updateRoute();
         }
 
         function updateRoute() {
-            markers.forEach(m => map.removeLayer(m));
-            routeSegments.forEach(l => map.removeLayer(l));
-            touchSegments.forEach(l => map.removeLayer(l));
+            markers.forEach(m => map.removeLayer(m)); routeSegments.forEach(l => map.removeLayer(l)); touchSegments.forEach(l => map.removeLayer(l));
             markers = []; routeSegments = []; touchSegments = [];
-
             waypoints.forEach((wp, i) => {
                 let m = L.marker([wp.lat, wp.lng], {draggable: true}).addTo(map);
-                
-                // Live lijnen meebewegen
                 m.on('drag', e => {
-                    waypoints[i].lat = e.latlng.lat;
-                    waypoints[i].lng = e.latlng.lng;
-                    if (i > 0) {
-                        let coordsPrev = [[waypoints[i-1].lat, waypoints[i-1].lng], [e.latlng.lat, e.latlng.lng]];
-                        routeSegments[i-1].setLatLngs(coordsPrev);
-                        touchSegments[i-1].setLatLngs(coordsPrev);
-                    }
-                    if (i < waypoints.length - 1) {
-                        let coordsNext = [[e.latlng.lat, e.latlng.lng], [waypoints[i+1].lat, waypoints[i+1].lng]];
-                        routeSegments[i].setLatLngs(coordsNext);
-                        touchSegments[i].setLatLngs(coordsNext);
-                    }
+                    waypoints[i].lat = e.latlng.lat; waypoints[i].lng = e.latlng.lng;
+                    if (i > 0) { routeSegments[i-1].setLatLngs([[waypoints[i-1].lat, waypoints[i-1].lng], [e.latlng.lat, e.latlng.lng]]); }
+                    if (i < waypoints.length - 1) { routeSegments[i].setLatLngs([[e.latlng.lat, e.latlng.lng], [waypoints[i+1].lat, waypoints[i+1].lng]]); }
                 });
-
                 m.on('dragend', () => updateRoute());
-
                 let nav = (i < waypoints.length - 1) ? calculateNav([wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]) : null;
-                let totalRem = calculateTotalFrom(i);
-
-                let content = document.createElement('div');
-                content.className = 'wp-popup';
-                content.innerHTML = `
-                    <b style="font-size:14px; color:#5bc0be;">WAYPOINT ${i+1}</b><br>
-                    ${nav ? `Koers: <b>${nav.course}°</b> | Afstand: <b>${nav.dist} NM</b><br>` : "<b>Eindbestemming</b><br>"}
-                    <span style="color:#777;">Totaal resterend: ${totalRem} NM</span><hr style="margin:5px 0;">
-                    <textarea placeholder="Notitie..." id="note-${i}">${wp.note || ""}</textarea>
-                    <button class="btn" style="background:#4caf50; color:white;" onclick="saveNote(${i})">Opslaan</button>
-                    <button class="btn btn-del" onclick="removeWaypoint(${i})">❌ Wis WP</button>
-                `;
-                m.bindPopup(content);
-                markers.push(m);
-
+                let content = `<div class="wp-popup"><b>WP ${i+1}</b><br>${nav ? `${nav.course}° | ${nav.dist} NM` : "Eind"}<br><textarea onchange="saveNote(${i}, this.value)">${wp.note || ""}</textarea><button class="btn btn-del" onclick="removeWaypoint(${i})">Wissen</button></div>`;
+                m.bindPopup(content); markers.push(m);
                 if (i < waypoints.length - 1) {
                     let p1 = [wp.lat, wp.lng], p2 = [waypoints[i+1].lat, waypoints[i+1].lng];
                     routeSegments.push(L.polyline([p1, p2], {color: 'red', weight: 4, dashArray: '5, 10'}).addTo(map));
                     let tl = L.polyline([p1, p2], {color: 'transparent', weight: 25}).addTo(map);
-                    tl.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng, i + 1));
-                    touchSegments.push(tl);
+                    tl.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng, i + 1)); touchSegments.push(tl);
                 }
             });
         }
 
-        window.saveNote = function(i) { waypoints[i].note = document.getElementById(`note-${i}`).value; map.closePopup(); };
-        window.removeWaypoint = function(i) { waypoints.splice(i, 1); updateRoute(); };
-        window.clearRoute = function() { if(confirm("Huidige route wissen?")) { waypoints = []; updateRoute(); } };
-
-        function calculateNav(p1, p2) {
-            let d = (map.distance(p1, p2) / 1852).toFixed(1);
-            let lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180;
-            let dLon = (p2[1] - p1[1]) * Math.PI / 180;
-            let y = Math.sin(dLon) * Math.cos(lat2);
-            let x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-            return { course: Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360).toString().padStart(3, '0'), dist: d };
-        }
-
-        function calculateTotalFrom(idx) {
-            let t = 0;
-            for (let i = idx; i < waypoints.length - 1; i++) { t += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]); }
-            return (t / 1852).toFixed(1);
-        }
-
-        // --- NAMEN, OPSLAAN & LADEN ---
-        window.saveRouteByName = function() {
-            let name = prompt("Geef de route een naam:");
-            if (name) { routesDB[name] = waypoints; localStorage.setItem('seafarer_routes_db', JSON.stringify(routesDB)); alert("Opgeslagen!"); }
-        };
-
-        window.loadRouteByName = function() {
-            let names = Object.keys(routesDB);
-            if(names.length === 0) { alert("Geen routes gevonden."); return; }
-            let selected = prompt(`Beschikbare routes:\n- ${names.join("\n- ")}`);
-            if (selected && routesDB[selected]) { waypoints = routesDB[selected]; updateRoute(); }
-        };
-
-        // --- MONITORING (GPS, Kompas & Wake Lock) ---
+        // --- MONITORING ---
         window.toggleMonitoring = function() {
             isMonitoring = !isMonitoring;
             let btn = document.getElementById('monitorBtn');
-            let bar = document.getElementById('monitor-bar');
-            
             if (isMonitoring) {
                 requestWakeLock();
-                btn.innerHTML = "🛑 Stop Monitoring";
-                btn.style.background = "#ff4d4d"; btn.style.color = "white";
-                bar.style.display = "flex";
+                btn.innerHTML = "🛑 Stop Monitoring"; btn.style.background = "#ff4d4d";
+                document.getElementById('monitor-bar').style.display = "flex";
                 if (navigator.geolocation) watchId = navigator.geolocation.watchPosition(updateShip, console.error, {enableHighAccuracy: true});
-                
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    DeviceOrientationEvent.requestPermission().then(state => {
-                        if (state === 'granted') window.addEventListener('deviceorientation', handleOrientation);
-                    }).catch(console.error);
+                    DeviceOrientationEvent.requestPermission().then(state => { if (state === 'granted') window.addEventListener('deviceorientation', handleOrientation); });
                 } else { window.addEventListener('deviceorientation', handleOrientation); }
             } else {
                 if(wakeLock) wakeLock.release();
-                btn.innerHTML = "📡 Start Monitoring";
-                btn.style.background = "#ff9f1c"; btn.style.color = "#0b132b";
-                bar.style.display = "none";
+                btn.innerHTML = "📡 Start Monitoring"; btn.style.background = "#ff9f1c";
+                document.getElementById('monitor-bar').style.display = "none";
                 if(watchId) navigator.geolocation.clearWatch(watchId);
                 window.removeEventListener('deviceorientation', handleOrientation);
-                if(shipMarker) map.removeLayer(shipMarker);
-                if(dynamicNavLine) map.removeLayer(dynamicNavLine);
-                shipMarker = null; dynamicNavLine = null; hasCompass = false;
+                if(shipMarker) map.removeLayer(shipMarker); shipMarker = null;
             }
         };
 
@@ -254,54 +175,58 @@
             let cog = pos.coords.heading || 0, sog = (pos.coords.speed * 1.943) || 0;
             if (!shipMarker) {
                 shipMarker = L.marker([lat, lng], {draggable: true, zIndexOffset: 1000, icon: shipIcon}).addTo(map);
-                // Pin-logica
-                shipMarker.on('dragend', function() {
-                    pinnedPixel = map.latLngToContainerPoint(shipMarker.getLatLng());
-                });
-            } else {
-                shipMarker.setLatLng([lat, lng]);
-                if (!hasCompass) {
-                    let icon = document.getElementById('ship-img');
-                    if (icon) icon.style.transform = `rotate(${cog}deg)`;
-                }
-            }
+                shipMarker.on('dragend', () => { pinnedPixel = map.latLngToContainerPoint(shipMarker.getLatLng()); });
+            } else { shipMarker.setLatLng([lat, lng]); }
             
-            // Relatieve beweging (pinnen)
             if (pinnedPixel) {
                 let target = map.containerPointToLatLng(pinnedPixel);
                 map.panTo([map.getCenter().lat + (lat - target.lat), map.getCenter().lng + (lng - target.lng)], {animate: false});
-            } else {
-                map.panTo([lat, lng]); // Standaard centreren
-            }
+            } else { map.panTo([lat, lng]); }
 
             document.getElementById('sog').innerText = sog.toFixed(1) + " kn";
             document.getElementById('cog').innerText = Math.round(cog).toString().padStart(3, '0') + "°";
-            
             if (waypoints.length > 0) {
                 let d = (map.distance([lat, lng], [waypoints[0].lat, waypoints[0].lng]) / 1852).toFixed(1);
                 document.getElementById('next-wp').innerText = d + " NM";
-                let coords = [[lat, lng], [waypoints[0].lat, waypoints[0].lng]];
-                if (!dynamicNavLine) { dynamicNavLine = L.polyline(coords, {color: '#ff9f1c', weight: 3, dashArray: '5,5'}).addTo(map);
-                } else { dynamicNavLine.setLatLngs(coords); }
-            } else if (dynamicNavLine) {
-                map.removeLayer(dynamicNavLine);
-                dynamicNavLine = null;
+                if (!dynamicNavLine) { dynamicNavLine = L.polyline([[lat, lng], [waypoints[0].lat, waypoints[0].lng]], {color: '#ff9f1c', weight: 3, dashArray: '5,5'}).addTo(map); }
+                else { dynamicNavLine.setLatLngs([[lat, lng], [waypoints[0].lat, waypoints[0].lng]]); }
             }
         }
 
-        function handleOrientation(event) {
-            let heading = event.webkitCompassHeading || (event.alpha !== null ? 360 - event.alpha : null);
-            if (heading !== null) {
-                hasCompass = true;
-                document.getElementById('hdg').innerText = Math.round(heading).toString().padStart(3, '0') + "°";
-                let icon = document.getElementById('ship-img');
-                if (icon) icon.style.transform = `rotate(${heading}deg)`;
-            }
+        // --- AIS LOGICA ---
+        window.toggleAIS = function() {
+            isAisVisible = !isAisVisible;
+            const btn = document.getElementById('aisBtn');
+            if (isAisVisible) { btn.style.background = "#5bc0be"; btn.innerText = "🚢 AIS Actief"; loadAISData(); window.aisInterval = setInterval(loadAISData, 60000); }
+            else { btn.style.background = "#3a506b"; btn.innerText = "🚢 Toon AIS Schepen"; if (aisLayer) map.removeLayer(aisLayer); clearInterval(window.aisInterval); }
+        };
+
+        async function loadAISData() {
+            if (!isAisVisible) return;
+            try {
+                const b = map.getBounds();
+                const url = `https://pda.openseamap.org/ais/get_status.php?latMin=${b.getSouth()}&latMax=${b.getNorth()}&lonMin=${b.getWest()}&lonMax=${b.getEast()}`;
+                const resp = await fetch(url); const data = await resp.json();
+                if (aisLayer) map.removeLayer(aisLayer);
+                aisLayer = L.geoJSON(data, {
+                    pointToLayer: (f, l) => L.marker(l, { icon: L.divIcon({ html: `<div style="transform: rotate(${f.properties.course || 0}deg);"><svg width="20" height="20" viewBox="0 0 100 100"><path d="M50 0 L90 100 L50 80 L10 100 Z" fill="#ffffff" stroke="blue" stroke-width="5"/></svg></div>`, iconSize:[20,20] }) }).bindPopup(`<b>${f.properties.name || "AIS"}</b><br>SOG: ${f.properties.sog} kn`)
+                }).addTo(map);
+            } catch (err) { console.log("AIS laden mislukt"); }
         }
 
-        window.togglePanel = function() { document.getElementById('planner-panel').classList.toggle('minimized'); document.getElementById('panel-content').classList.toggle('hidden'); document.getElementById('min-icon').innerText = document.getElementById('planner-panel').classList.contains('minimized') ? "+" : "_"; };
-        window.planSmartRoute = function() { waypoints = [{lat: 52.43, lng: 4.25, note:"Start"}, {lat: 53.05, lng: 4.40, note:"TSS"}, {lat: 53.88, lng: 8.75, note:"Cuxhaven"}, {lat: 53.54, lng: 9.92, note:"Hamburg"}]; updateRoute(); }
-        window.exportToRTZ = function() { let xml = `<?xml version="1.0" encoding="UTF-8"?><route version="1.0" xmlns="http://www.cirm.org/RTZ/1/0"><routeInfo routeName="Seafarer_Route"/><waypoints>`; waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}" name="WP${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/><leg portXTD="0.5" starboardXTD="0.5"/></waypoint>`; }); xml += `</waypoints></route>`; let blob = new Blob([xml], {type: "text/xml"}); let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = "Seafarer_Route.rtz"; a.click(); };
+        // --- OVERIGE FUNCTIES ---
+        function handleOrientation(e) { let h = e.webkitCompassHeading || (360 - e.alpha); if(h) { document.getElementById('hdg').innerText = Math.round(h).toString().padStart(3, '0') + "°"; if(shipMarker) document.getElementById('ship-img').style.transform = `rotate(${h}deg)`; } }
+        function saveNote(i, v) { waypoints[i].note = v; }
+        function removeWaypoint(i) { waypoints.splice(i, 1); updateRoute(); }
+        function calculateNav(p1, p2) { let d = (map.distance(p1, p2) / 1852).toFixed(1); let lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180, dLon = (p2[1] - p1[1]) * Math.PI / 180, y = Math.sin(dLon) * Math.cos(lat2), x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon); return { course: Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360).toString().padStart(3, '0'), dist: d }; }
+        function calculateTotalFrom(idx) { let t = 0; for (let i = idx; i < waypoints.length - 1; i++) { t += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]); } return (t / 1852).toFixed(1); }
+        window.saveRouteByName = function() { let n = prompt("Naam:"); if(n) { routesDB[n] = waypoints; localStorage.setItem('seafarer_routes_db', JSON.stringify(routesDB)); } };
+        window.loadRouteByName = function() { let names = Object.keys(routesDB); let s = prompt(`Routes: ${names.join(", ")}`); if(s && routesDB[s]) { waypoints = routesDB[s]; updateRoute(); } };
+        window.togglePanel = function() { document.getElementById('planner-panel').classList.toggle('minimized'); document.getElementById('panel-content').classList.toggle('hidden'); };
+        window.clearRoute = function() { waypoints = []; updateRoute(); };
+        window.planSmartRoute = function() { waypoints = [{lat: 52.43, lng: 4.25}, {lat: 53.05, lng: 4.40}, {lat: 53.54, lng: 9.92}]; updateRoute(); };
+        window.exportToRTZ = function() { let xml = `<?xml version="1.0" encoding="UTF-8"?><route><waypoints>`; waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/></waypoint>`; }); xml += `</waypoints></route>`; let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], {type: "text/xml"})); a.download = "Route.rtz"; a.click(); };
+        map.on('moveend', () => { if(isAisVisible) loadAISData(); });
     </script>
 </body>
 </html>
