@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v3.5</title>
+    <title>Seafarer Nav v3.6</title>
     
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" href="image_0.png">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b132b; color: white; font-family: 'Segoe UI', sans-serif; }
@@ -22,7 +23,6 @@
         .val { font-size: 18px; font-weight: bold; color: #5bc0be; display: block; }
         .label { font-size: 9px; text-transform: uppercase; color: #a1a1aa; }
         .btn { display: block; width: 100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; }
-        .btn-plan { background: #4caf50; color: white; }
         .btn-monitor { background: #ff9f1c; color: #0b132b; }
         .btn-del { background: #ff4d4d; color: white; margin-top: 8px; }
         select { width: 100%; padding: 6px; margin-bottom: 5px; border-radius: 4px; border: none; background: #1c2541; color: white; font-size: 11px; }
@@ -36,15 +36,14 @@
 
     <div id="planner-panel" class="panel">
         <div class="panel-header" onclick="togglePanel()">
-            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.5</span>
+            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.6</span>
             <span id="min-icon">_</span>
         </div>
         <div id="panel-content">
-            <button class="btn btn-plan" onclick="planSmartRoute()">🗺️ Smart Route (Demo)</button>
             <div style="display:flex; gap:5px; margin-top:5px;">
-                <button class="btn" style="flex:1; background:#3a506b; color:white;" onclick="saveRouteRTZ()">💾 Opslaan (.rtz)</button>
-                <button class="btn" style="flex:1; background:#3a506b; color:white;" onclick="document.getElementById('rtz-upload').click()">📂 Laden (.rtz)</button>
-                <input type="file" id="rtz-upload" accept=".rtz, text/xml" style="display:none;" onchange="loadRouteRTZ(event)">
+                <button class="btn" style="flex:1; background:#3a506b; color:white;" onclick="saveRouteRTZ()">💾 Opslaan</button>
+                <button class="btn" style="flex:1; background:#3a506b; color:white;" onclick="document.getElementById('rtz-upload').click()">📂 Laden (.voy/.rtz)</button>
+                <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip, text/xml" style="display:none;" onchange="loadRouteRTZ(event)">
             </div>
             <button class="btn" style="background:#555; color:white;" onclick="clearRoute()">🗑️ Wis Route</button>
 
@@ -72,10 +71,8 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- PWA SERVICE WORKER ---
         if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(err => console.log('SW mislukt', err)); }
 
-        // --- WAKE LOCK ---
         let wakeLock = null;
         async function requestWakeLock() {
             try {
@@ -84,8 +81,7 @@
             } catch (err) { console.log("WakeLock mislukt"); }
         }
 
-        // --- BASIS KAART ---
-        var map = L.map('map', { zoomControl: false, center: [53.5, 8.5], zoom: 8 });
+        var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 }); // Gecentreerd rond Brunsbüttel
         var waypoints = [], markers = [], routeSegments = [], touchSegments = [];
         var isMonitoring = false, shipMarker = null, watchId = null, hasCompass = false, dynamicNavLine = null;
         var pinnedPixel = null;
@@ -108,14 +104,12 @@
         };
         changeLayer('onc');
 
-        // --- SCHIP SYMBOOL ---
         var shipIcon = L.divIcon({
             className: 'ship-icon',
             html: `<img id="ship-img" src="https://cdn-icons-png.flaticon.com/512/103/103002.png" style="transform: rotate(0deg); width: 40px; height: 40px;">`,
             iconSize: [40, 40], iconAnchor: [20, 20]
         });
 
-        // --- ROUTE & WAYPOINTS ---
         map.on('contextmenu', e => addWaypoint(e.latlng.lat, e.latlng.lng));
 
         function addWaypoint(lat, lng, idx = null) {
@@ -147,59 +141,61 @@
             });
         }
 
-        // --- BESTANDSBEHEER (Nieuw in v3.5) ---
+        // --- BESTANDSBEHEER MET .VOY ONDERSTEUNING ---
         window.saveRouteRTZ = function() {
             if(waypoints.length === 0) { alert("Geen waypoints om op te slaan!"); return; }
-            let naam = prompt("Geef de route een bestandsnaam (zonder .rtz):", "MijnRoute");
-            if(!naam) return; // Geannuleerd
-            
+            let naam = prompt("Geef de route een bestandsnaam:", "Seafarer_Route");
+            if(!naam) return;
             let xml = `<?xml version="1.0" encoding="UTF-8"?><route version="1.0" xmlns="http://www.cirm.org/RTZ/1/0"><routeInfo routeName="${naam}"/><waypoints>`; 
-            waypoints.forEach((wp, i) => { 
-                xml += `<waypoint id="${i+1}" name="WP${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/><leg portXTD="0.5" starboardXTD="0.5"/></waypoint>`; 
-            }); 
+            waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}" name="WP${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/><leg portXTD="0.5" starboardXTD="0.5"/></waypoint>`; }); 
             xml += `</waypoints></route>`; 
-            
-            let blob = new Blob([xml], {type: "application/xml"}); 
-            let a = document.createElement('a'); 
-            a.href = URL.createObjectURL(blob); 
-            a.download = naam + ".rtz"; 
-            a.click(); 
+            let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], {type: "application/xml"})); a.download = naam + ".rtz"; a.click(); 
         };
 
-        window.loadRouteRTZ = function(event) {
+        window.loadRouteRTZ = async function(event) {
             let file = event.target.files[0];
             if (!file) return;
 
-            let reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    let parser = new DOMParser();
-                    let xmlDoc = parser.parseFromString(e.target.result, "text/xml");
-                    let wps = xmlDoc.getElementsByTagName("waypoint");
-                    
-                    if(wps.length === 0) { alert("Geen geldige waypoints gevonden in dit RTZ bestand."); return; }
+            let fileName = file.name.toLowerCase();
+            let xmlText = "";
 
-                    waypoints = [];
-                    for(let i = 0; i < wps.length; i++) {
-                        let pos = wps[i].getElementsByTagName("position")[0];
-                        if(pos) {
-                            let lat = parseFloat(pos.getAttribute("lat"));
-                            let lon = parseFloat(pos.getAttribute("lon"));
-                            waypoints.push({lat: lat, lng: lon, note: ""});
-                        }
-                    }
-                    updateRoute();
-                    // Centreer de kaart op het eerste ingeladen waypoint
-                    map.panTo([waypoints[0].lat, waypoints[0].lng]);
-                } catch(err) {
-                    alert("Fout bij het inlezen van het RTZ bestand.");
+            try {
+                if (fileName.endsWith('.voy') || fileName.endsWith('.zip')) {
+                    // Pak het bestand stiekem uit met JSZip!
+                    let zip = new JSZip();
+                    let contents = await zip.loadAsync(file);
+                    
+                    // Zoek het verstopte .rtz bestand
+                    let rtzFileName = Object.keys(contents.files).find(name => name.toLowerCase().endsWith('.rtz'));
+                    
+                    if (!rtzFileName) { alert("Geen route (.rtz) gevonden in dit VOY bestand."); return; }
+                    xmlText = await contents.files[rtzFileName].async("text");
+                } else {
+                    // Los .rtz bestand lezen
+                    xmlText = await file.text();
                 }
-            };
-            reader.readAsText(file);
-            event.target.value = ""; // Reset de knop zodat je hetzelfde bestand evt nog eens kan laden
+
+                let parser = new DOMParser();
+                let xmlDoc = parser.parseFromString(xmlText, "text/xml");
+                let wps = xmlDoc.getElementsByTagName("waypoint");
+                
+                if(wps.length === 0) { alert("Geen waypoints in dit bestand."); return; }
+
+                waypoints = [];
+                for(let i = 0; i < wps.length; i++) {
+                    let pos = wps[i].getElementsByTagName("position")[0];
+                    if(pos) waypoints.push({lat: parseFloat(pos.getAttribute("lat")), lng: parseFloat(pos.getAttribute("lon")), note: ""});
+                }
+                updateRoute();
+                map.panTo([waypoints[0].lat, waypoints[0].lng]);
+                
+            } catch(err) {
+                console.error(err);
+                alert("Fout bij het openen van de route.");
+            }
+            event.target.value = ""; // Reset input
         };
 
-        // --- MONITORING ---
         window.toggleMonitoring = function() {
             isMonitoring = !isMonitoring;
             let btn = document.getElementById('monitorBtn');
@@ -244,7 +240,6 @@
             }
         }
 
-        // --- AIS LOGICA ---
         window.toggleAIS = function() {
             isAisVisible = !isAisVisible;
             const btn = document.getElementById('aisBtn');
@@ -256,45 +251,34 @@
             if (!isAisVisible) return;
             try {
                 const b = map.getBounds();
-                // De originele OpenSeaMap URL
-                const targetUrl = `https://pda.openseamap.org/ais/get_status.php?latMin=${b.getSouth()}&latMax=${b.getNorth()}&lonMin=${b.getWest()}&lonMax=${b.getEast()}`;
-                // We sturen het door een veilige proxy (AllOrigins) om de browser-blokkade te omzeilen
+                // Cache-buster toegevoegd aan URL
+                const targetUrl = `https://pda.openseamap.org/ais/get_status.php?latMin=${b.getSouth()}&latMax=${b.getNorth()}&lonMin=${b.getWest()}&lonMax=${b.getEast()}&_=${Date.now()}`;
                 const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
                 
                 const resp = await fetch(url); 
-                if (!resp.ok) throw new Error("Geen verbinding met AIS server");
+                if (!resp.ok) throw new Error("Proxy weigert");
                 const data = await resp.json();
                 
                 if (aisLayer) map.removeLayer(aisLayer);
+                if (!data || !data.features || data.features.length === 0) return; // Geen data in dit gebied
+                
                 aisLayer = L.geoJSON(data, {
-                    pointToLayer: (f, l) => L.marker(l, { 
-                        icon: L.divIcon({ 
-                            className: 'ais-icon',
-                            html: `<div style="transform: rotate(${f.properties.course || 0}deg);"><svg width="20" height="20" viewBox="0 0 100 100"><path d="M50 0 L90 100 L50 80 L10 100 Z" fill="#ffffff" stroke="blue" stroke-width="5"/></svg></div>`, 
-                            iconSize:[20,20],
-                            iconAnchor:[10,10]
-                        }) 
-                    }).bindPopup(`<b>${f.properties.name || "Onbekend Schip"}</b><br>SOG: ${f.properties.sog || 0} kn<br>COG: ${f.properties.course || 0}°`)
+                    pointToLayer: (f, l) => L.marker(l, { icon: L.divIcon({ html: `<div style="transform: rotate(${f.properties.course || 0}deg);"><svg width="20" height="20" viewBox="0 0 100 100"><path d="M50 0 L90 100 L50 80 L10 100 Z" fill="#ffffff" stroke="blue" stroke-width="5"/></svg></div>`, iconSize:[20,20] }) }).bindPopup(`<b>${f.properties.name || "Schip"}</b><br>SOG: ${f.properties.sog || 0} kn<br>COG: ${f.properties.course || 0}°`)
                 }).addTo(map);
             } catch (err) { 
-                console.error("AIS laden mislukt:", err); 
+                console.error("AIS mislukt"); 
                 const btn = document.getElementById('aisBtn');
-                btn.style.background = "#ff4d4d";
-                btn.innerText = "⚠️ AIS Fout";
-                // Zet de knop na 3 seconden weer terug
+                btn.style.background = "#ff4d4d"; btn.innerText = "⚠️ AIS Fout";
                 setTimeout(() => { if(isAisVisible) { btn.style.background = "#5bc0be"; btn.innerText = "🚢 AIS Actief"; } }, 3000);
             }
         }
-        
-        // --- OVERIGE FUNCTIES ---
+
         function handleOrientation(e) { let h = e.webkitCompassHeading || (360 - e.alpha); if(h) { document.getElementById('hdg').innerText = Math.round(h).toString().padStart(3, '0') + "°"; if(shipMarker) document.getElementById('ship-img').style.transform = `rotate(${h}deg)`; } }
         function saveNote(i, v) { waypoints[i].note = v; }
         function removeWaypoint(i) { waypoints.splice(i, 1); updateRoute(); }
         function calculateNav(p1, p2) { let d = (map.distance(p1, p2) / 1852).toFixed(1); let lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180, dLon = (p2[1] - p1[1]) * Math.PI / 180, y = Math.sin(dLon) * Math.cos(lat2), x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon); return { course: Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360).toString().padStart(3, '0'), dist: d }; }
-        function calculateTotalFrom(idx) { let t = 0; for (let i = idx; i < waypoints.length - 1; i++) { t += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]); } return (t / 1852).toFixed(1); }
         window.togglePanel = function() { document.getElementById('planner-panel').classList.toggle('minimized'); document.getElementById('panel-content').classList.toggle('hidden'); };
         window.clearRoute = function() { waypoints = []; updateRoute(); };
-        window.planSmartRoute = function() { waypoints = [{lat: 52.43, lng: 4.25}, {lat: 53.05, lng: 4.40}, {lat: 53.54, lng: 9.92}]; updateRoute(); };
         map.on('moveend', () => { if(isAisVisible) loadAISData(); });
     </script>
 </body>
