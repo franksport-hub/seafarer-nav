@@ -256,15 +256,36 @@
             if (!isAisVisible) return;
             try {
                 const b = map.getBounds();
-                const url = `https://pda.openseamap.org/ais/get_status.php?latMin=${b.getSouth()}&latMax=${b.getNorth()}&lonMin=${b.getWest()}&lonMax=${b.getEast()}`;
-                const resp = await fetch(url); const data = await resp.json();
+                // De originele OpenSeaMap URL
+                const targetUrl = `https://pda.openseamap.org/ais/get_status.php?latMin=${b.getSouth()}&latMax=${b.getNorth()}&lonMin=${b.getWest()}&lonMax=${b.getEast()}`;
+                // We sturen het door een veilige proxy (AllOrigins) om de browser-blokkade te omzeilen
+                const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+                
+                const resp = await fetch(url); 
+                if (!resp.ok) throw new Error("Geen verbinding met AIS server");
+                const data = await resp.json();
+                
                 if (aisLayer) map.removeLayer(aisLayer);
                 aisLayer = L.geoJSON(data, {
-                    pointToLayer: (f, l) => L.marker(l, { icon: L.divIcon({ html: `<div style="transform: rotate(${f.properties.course || 0}deg);"><svg width="20" height="20" viewBox="0 0 100 100"><path d="M50 0 L90 100 L50 80 L10 100 Z" fill="#ffffff" stroke="blue" stroke-width="5"/></svg></div>`, iconSize:[20,20] }) }).bindPopup(`<b>${f.properties.name || "AIS"}</b><br>SOG: ${f.properties.sog} kn`)
+                    pointToLayer: (f, l) => L.marker(l, { 
+                        icon: L.divIcon({ 
+                            className: 'ais-icon',
+                            html: `<div style="transform: rotate(${f.properties.course || 0}deg);"><svg width="20" height="20" viewBox="0 0 100 100"><path d="M50 0 L90 100 L50 80 L10 100 Z" fill="#ffffff" stroke="blue" stroke-width="5"/></svg></div>`, 
+                            iconSize:[20,20],
+                            iconAnchor:[10,10]
+                        }) 
+                    }).bindPopup(`<b>${f.properties.name || "Onbekend Schip"}</b><br>SOG: ${f.properties.sog || 0} kn<br>COG: ${f.properties.course || 0}°`)
                 }).addTo(map);
-            } catch (err) { console.log("AIS laden mislukt"); }
+            } catch (err) { 
+                console.error("AIS laden mislukt:", err); 
+                const btn = document.getElementById('aisBtn');
+                btn.style.background = "#ff4d4d";
+                btn.innerText = "⚠️ AIS Fout";
+                // Zet de knop na 3 seconden weer terug
+                setTimeout(() => { if(isAisVisible) { btn.style.background = "#5bc0be"; btn.innerText = "🚢 AIS Actief"; } }, 3000);
+            }
         }
-
+        
         // --- OVERIGE FUNCTIES ---
         function handleOrientation(e) { let h = e.webkitCompassHeading || (360 - e.alpha); if(h) { document.getElementById('hdg').innerText = Math.round(h).toString().padStart(3, '0') + "°"; if(shipMarker) document.getElementById('ship-img').style.transform = `rotate(${h}deg)`; } }
         function saveNote(i, v) { waypoints[i].note = v; }
