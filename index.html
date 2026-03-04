@@ -343,4 +343,30 @@
                 data.marker = L.marker([data.lat, data.lon], {
                     icon: L.divIcon({ className: 'ais-icon', html: iconHtml, iconSize:[20,20], iconAnchor:[10,10] })
                 }).bindPopup(`<b>${data.name}</b><br>SOG: ${data.sog} kn<br>COG: ${data.cog}°`).addTo(map);
-            } else
+            } else {
+                data.marker.setLatLng([data.lat, data.lon]);
+                data.marker.setIcon(L.divIcon({ className: 'ais-icon', html: iconHtml, iconSize:[20,20], iconAnchor:[10,10] }));
+                data.marker.setPopupContent(`<b>${data.name}</b><br>SOG: ${data.sog} kn<br>COG: ${data.cog}°`);
+            }
+        }
+
+        map.on('moveend', () => {
+            if (isAisVisible && aisSocket && aisSocket.readyState === WebSocket.OPEN) {
+                let subMsg = {
+                    APIKey: AIS_API_KEY,
+                    BoundingBoxes: getMapBounds()
+                };
+                aisSocket.send(JSON.stringify(subMsg));
+            }
+        });
+
+        // --- OVERIGE FUNCTIES ---
+        function handleOrientation(e) { let h = e.webkitCompassHeading || (360 - e.alpha); if(h) { document.getElementById('hdg').innerText = Math.round(h).toString().padStart(3, '0') + "°"; if(shipMarker) document.getElementById('ship-img').style.transform = `rotate(${h}deg)`; } }
+        function saveNote(i, v) { waypoints[i].note = v; }
+        function removeWaypoint(i) { waypoints.splice(i, 1); updateRoute(); }
+        function calculateNav(p1, p2) { let d = (map.distance(p1, p2) / 1852).toFixed(1); let lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180, dLon = (p2[1] - p1[1]) * Math.PI / 180, y = Math.sin(dLon) * Math.cos(lat2), x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon); return { course: Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360).toString().padStart(3, '0'), dist: d }; }
+        window.togglePanel = function() { document.getElementById('planner-panel').classList.toggle('minimized'); document.getElementById('panel-content').classList.toggle('hidden'); };
+        window.clearRoute = function() { waypoints = []; updateRoute(); };
+    </script>
+</body>
+</html>
