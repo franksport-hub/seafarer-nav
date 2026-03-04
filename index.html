@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v3.8</title>
+    <title>Seafarer Nav v3.9</title>
     
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" href="image_0.png">
@@ -36,7 +36,7 @@
 
     <div id="planner-panel" class="panel">
         <div class="panel-header" onclick="togglePanel()">
-            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.8</span>
+            <span style="font-size:14px; font-weight:bold;">Seafarer Nav v3.9</span>
             <span id="min-icon">_</span>
         </div>
         <div id="panel-content">
@@ -71,7 +71,6 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- BASIS CONFIGURATIE ---
         if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(err => console.log('SW mislukt', err)); }
 
         let wakeLock = null;
@@ -82,7 +81,6 @@
             } catch (err) { console.log("WakeLock mislukt"); }
         }
 
-        // --- KAART & LAAG SETUP ---
         var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 }); 
         var waypoints = [], markers = [], routeSegments = [], touchSegments = [];
         var isMonitoring = false, shipMarker = null, watchId = null, hasCompass = false, dynamicNavLine = null;
@@ -117,7 +115,6 @@
             iconSize: [40, 40], iconAnchor: [20, 20]
         });
 
-        // --- ROUTING LOGICA ---
         map.on('contextmenu', e => addWaypoint(e.latlng.lat, e.latlng.lng));
 
         function addWaypoint(lat, lng, idx = null) {
@@ -149,7 +146,6 @@
             });
         }
 
-        // --- BESTANDSBEHEER ---
         window.saveRouteRTZ = function() {
             if(waypoints.length === 0) { alert("Geen waypoints om op te slaan!"); return; }
             let naam = prompt("Geef de route een bestandsnaam:", "Seafarer_Route");
@@ -195,7 +191,6 @@
             event.target.value = ""; 
         };
 
-        // --- MONITORING ---
         window.toggleMonitoring = function() {
             isMonitoring = !isMonitoring;
             let btn = document.getElementById('monitorBtn');
@@ -240,7 +235,7 @@
             }
         }
 
-        // --- LIVE AISSTREAM LOGICA ---
+        // --- VERBETERDE LIVE AISSTREAM LOGICA ---
         window.toggleAIS = function() {
             isAisVisible = !isAisVisible;
             const btn = document.getElementById('aisBtn');
@@ -255,11 +250,12 @@
 
         function getMapBounds() {
             const b = map.getBounds();
+            // Formaat moet exact [[[South, West], [North, East]]] zijn
             return [[[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]]];
         }
 
         function startAISStream() {
-            if (aisSocket && aisSocket.readyState === WebSocket.OPEN) return;
+            if (aisSocket && (aisSocket.readyState === WebSocket.OPEN || aisSocket.readyState === WebSocket.CONNECTING)) return;
 
             aisSocket = new WebSocket("wss://stream.aisstream.io/v0/stream");
 
@@ -269,25 +265,33 @@
                 document.getElementById('aisBtn').style.color = "#0b132b";
                 document.getElementById('aisBtn').innerText = "✅ Live AIS Actief";
                 
+                // Simpele subscriptie (zonder filters om fouten te voorkomen)
                 let subMsg = {
                     APIKey: AIS_API_KEY,
-                    BoundingBoxes: getMapBounds(),
-                    FilterMessageTypes: ["PositionReport", "StandardClassBPositionReport", "ShipStaticData"]
+                    BoundingBoxes: getMapBounds()
                 };
                 aisSocket.send(JSON.stringify(subMsg));
             };
 
             aisSocket.onmessage = function(event) {
-                let msg = JSON.parse(event.data);
-                handleAISMessage(msg);
+                try {
+                    let msg = JSON.parse(event.data);
+                    handleAISMessage(msg);
+                } catch(e) {}
+            };
+
+            // Als de server ons eruit gooit (bijv. wegens te veel connecties)
+            aisSocket.onclose = function(event) {
+                console.warn("AISStream verbinding verbroken!", event);
+                document.getElementById('aisBtn').style.background = "#ff4d4d";
+                document.getElementById('aisBtn').style.color = "white";
+                document.getElementById('aisBtn').innerText = "⚠️ AIS Verbroken";
+                isAisVisible = false;
+                aisSocket = null;
             };
 
             aisSocket.onerror = function(error) {
                 console.error("WebSocket Fout", error);
-                document.getElementById('aisBtn').style.background = "#ff4d4d";
-                document.getElementById('aisBtn').style.color = "white";
-                document.getElementById('aisBtn').innerText = "⚠️ AIS Fout";
-                isAisVisible = false;
             };
         }
 
@@ -298,6 +302,9 @@
         }
 
         function handleAISMessage(msg) {
+            // Check of de benodigde data er wel in zit
+            if (!msg || !msg.MetaData || !msg.MetaData.MMSI) return;
+            
             let mmsi = msg.MetaData.MMSI;
             let shipName = msg.MetaData.ShipName ? msg.MetaData.ShipName.trim() : mmsi;
             
@@ -317,7 +324,7 @@
 
                 updateShipMarker(mmsi);
             } else if (msg.MessageType === "ShipStaticData") {
-                if(msg.Message.ShipStaticData.Name) {
+                if(msg.Message && msg.Message.ShipStaticData && msg.Message.ShipStaticData.Name) {
                     aisMarkers[mmsi].name = msg.Message.ShipStaticData.Name.trim();
                     if(aisMarkers[mmsi].marker) {
                         aisMarkers[mmsi].marker.setPopupContent(`<b>${aisMarkers[mmsi].name}</b><br>SOG: ${aisMarkers[mmsi].sog} kn<br>COG: ${aisMarkers[mmsi].cog}°`);
@@ -336,31 +343,4 @@
                 data.marker = L.marker([data.lat, data.lon], {
                     icon: L.divIcon({ className: 'ais-icon', html: iconHtml, iconSize:[20,20], iconAnchor:[10,10] })
                 }).bindPopup(`<b>${data.name}</b><br>SOG: ${data.sog} kn<br>COG: ${data.cog}°`).addTo(map);
-            } else {
-                data.marker.setLatLng([data.lat, data.lon]);
-                data.marker.setIcon(L.divIcon({ className: 'ais-icon', html: iconHtml, iconSize:[20,20], iconAnchor:[10,10] }));
-                data.marker.setPopupContent(`<b>${data.name}</b><br>SOG: ${data.sog} kn<br>COG: ${data.cog}°`);
-            }
-        }
-
-        map.on('moveend', () => {
-            if (isAisVisible && aisSocket && aisSocket.readyState === WebSocket.OPEN) {
-                let subMsg = {
-                    APIKey: AIS_API_KEY,
-                    BoundingBoxes: getMapBounds(),
-                    FilterMessageTypes: ["PositionReport", "StandardClassBPositionReport", "ShipStaticData"]
-                };
-                aisSocket.send(JSON.stringify(subMsg));
-            }
-        });
-
-        // --- OVERIGE FUNCTIES ---
-        function handleOrientation(e) { let h = e.webkitCompassHeading || (360 - e.alpha); if(h) { document.getElementById('hdg').innerText = Math.round(h).toString().padStart(3, '0') + "°"; if(shipMarker) document.getElementById('ship-img').style.transform = `rotate(${h}deg)`; } }
-        function saveNote(i, v) { waypoints[i].note = v; }
-        function removeWaypoint(i) { waypoints.splice(i, 1); updateRoute(); }
-        function calculateNav(p1, p2) { let d = (map.distance(p1, p2) / 1852).toFixed(1); let lat1 = p1[0] * Math.PI / 180, lat2 = p2[0] * Math.PI / 180, dLon = (p2[1] - p1[1]) * Math.PI / 180, y = Math.sin(dLon) * Math.cos(lat2), x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon); return { course: Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360).toString().padStart(3, '0'), dist: d }; }
-        window.togglePanel = function() { document.getElementById('planner-panel').classList.toggle('minimized'); document.getElementById('panel-content').classList.toggle('hidden'); };
-        window.clearRoute = function() { waypoints = []; updateRoute(); };
-    </script>
-</body>
-</html>
+            } else
