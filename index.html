@@ -3,38 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v4.2</title>
-    
+    <title>Seafarer Nav v4.5</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b132b; color: white; font-family: 'Segoe UI', sans-serif; }
         #map { height: 100%; width: 100%; z-index: 1; }
-        
-        /* Hamburger Menu Style */
         .panel { position: absolute; background: rgba(20, 30, 48, 0.95); padding: 12px; border-radius: 8px; z-index: 1000; border: 1px solid #5bc0be; transition: all 0.3s ease; }
         #planner-panel { top: 10px; right: 10px; width: 240px; }
-        #planner-panel.minimized { width: 44px; height: 44px; padding: 0; overflow: hidden; border-radius: 4px; }
-        
-        .hamburger-icon { display: none; width: 44px; height: 44px; line-height: 44px; text-align: center; font-size: 24px; cursor: pointer; background: #3a506b; color: white; }
+        #planner-panel.minimized { width: 44px; height: 44px; padding: 0; overflow: hidden; }
+        .hamburger-icon { display: none; width: 44px; height: 44px; line-height: 44px; text-align: center; font-size: 24px; cursor: pointer; background: #3a506b; }
         #planner-panel.minimized .hamburger-icon { display: block; }
         #planner-panel.minimized .panel-content { display: none; }
-        
         .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5bc0be; margin-bottom: 10px; padding-bottom: 5px; font-weight: bold; }
-        .close-btn { cursor: pointer; font-size: 20px; padding: 0 5px; }
-
-        #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 600px; display: none; justify-content: space-around; text-align: center; }
+        #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 750px; display: none; justify-content: space-around; text-align: center; }
         .monitor-item { flex: 1; border-right: 1px solid #3a506b; }
         .monitor-item:last-child { border-right: none; }
-        .val { font-size: 20px; font-weight: bold; color: #5bc0be; display: block; }
-        .label { font-size: 10px; text-transform: uppercase; color: #a1a1aa; }
-        
-        .btn { display: block; width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 12px; background: #3a506b; color: white; }
+        .val { font-size: 18px; font-weight: bold; color: #5bc0be; display: block; }
+        .label { font-size: 9px; text-transform: uppercase; color: #a1a1aa; }
+        .btn { display: block; width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; background: #3a506b; color: white; }
         .btn-start { background: #ff9f1c; color: #0b132b; }
-        .vector-popup { color: black; line-height: 1.6; min-width: 180px; }
-        input[type="number"] { width: 60px; padding: 3px; font-weight: bold; }
+        .btn-danger { background: #ff4d4d !important; color: white; }
+        .vector-popup { color: black; line-height: 1.4; min-width: 160px; font-size: 13px; }
+        input[type="number"] { width: 50px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -42,22 +34,15 @@
     <div id="planner-panel" class="panel">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header">
-                <span>Seafarer Nav v4.2</span>
-                <span class="close-btn" onclick="toggleMenu()">×</span>
-            </div>
+            <div class="panel-header"><span>Seafarer Nav v4.5</span><span onclick="toggleMenu()" style="cursor:pointer">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
                 <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip" style="display:none;" onchange="loadRouteRTZ(event)">
             </div>
-            <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Skip WP</button>
+            <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
-            
-            <select id="layerSelect" class="btn" onchange="changeLayer(this.value)">
-                <option value="onc">Kaart: OpenNautical</option>
-                <option value="sat">Kaart: Satelliet</option>
-            </select>
+            <select id="layerSelect" class="btn" onchange="changeLayer(this.value)"><option value="onc">Kaart: OpenNautical</option><option value="sat">Kaart: Satelliet</option></select>
             <button class="btn btn-start" id="monitorBtn" onclick="toggleMonitoring()">📡 START MONITORING</button>
         </div>
     </div>
@@ -66,6 +51,7 @@
         <div class="monitor-item"><span class="label">SOG (avg)</span><span class="val" id="sog">0.0 kn</span></div>
         <div class="monitor-item"><span class="label">COG</span><span class="val" id="cog">000°</span></div>
         <div class="monitor-item"><span class="label">Actief</span><span class="val" id="wp-info">--</span></div>
+        <div class="monitor-item"><span class="label">TTG</span><span class="val" id="ttg">00:00</span></div>
         <div class="monitor-item"><span class="label">ETA (End)</span><span class="val" id="eta">--:--</span></div>
     </div>
 
@@ -74,32 +60,18 @@
     <script>
         var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 });
         var waypoints = [], routeLines = [], wpMarkers = [];
-        var activeWpIndex = 0, vectorMinutes = 6;
-        var shipPos = null, vectorLine = null, shipCircle = null;
-        var isMonitoring = false, watchId = null;
-        
-        // Gemiddelde snelheid variabelen (10 metingen)
-        var speedHistory = [];
+        var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [];
+        var shipPos = null, vectorLine = null, shipCircle = null, isMonitoring = false, watchId = null;
+        var mapOffset = null; // Voor off-center positie
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        function playArrivalBeep() { 
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            const b = (f, d, t) => {
-                const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
-                o.connect(g); g.connect(audioCtx.destination);
-                o.frequency.value = f; g.gain.value = 0.1;
-                o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + d);
-            };
-            b(880, 0.1, 0); b(880, 0.1, 0.2);
-        }
 
         function toggleMenu() { document.getElementById('planner-panel').classList.toggle('minimized'); }
 
         function toggleMonitoring() {
             if (!isMonitoring) {
                 isMonitoring = true;
+                mapOffset = null; // Reset offset bij start
                 document.getElementById('monitorBtn').innerText = "🛑 STOP MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff4d4d";
                 document.getElementById('monitor-bar').style.display = "flex";
@@ -113,7 +85,6 @@
             const cog = pos.coords.heading || 0;
             shipPos = [lat, lon];
 
-            // 10-seconden gemiddelde berekenen
             speedHistory.push(rawSog);
             if (speedHistory.length > 10) speedHistory.shift();
             const avgSog = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length;
@@ -122,91 +93,127 @@
             document.getElementById('cog').innerText = Math.round(cog).toString().padStart(3, '0') + "°";
             
             updateShipGraphics(lat, lon, cog, avgSog);
-            
-            if (waypoints.length > 0) {
-                checkAllBisectors(lat, lon);
-                calculateETA(lat, lon, avgSog);
-            }
+            calculateNavData(lat, lon, avgSog);
         }
 
         function updateShipGraphics(lat, lon, cog, sog) {
-            // Zwarte Ring
             if (!shipCircle) {
-                shipCircle = L.circleMarker([lat, lon], { radius: 10, color: '#000000', weight: 3, fillOpacity: 0 }).addTo(map);
-            } else { shipCircle.setLatLng([lat, lon]); }
+                shipCircle = L.marker([lat, lon], {
+                    draggable: true,
+                    icon: L.divIcon({
+                        className: 'ship-div',
+                        html: '<div style="width:20px; height:20px; border:3px solid black; border-radius:50%;"></div>',
+                        iconSize: [20, 20], iconAnchor: [10, 10]
+                    })
+                }).addTo(map);
 
-            // Zwarte Vector
+                // Off-center logica: bereken offset na slepen
+                shipCircle.on('dragend', function(e) {
+                    const markerPx = map.latLngToLayerPoint(e.target.getLatLng());
+                    const centerPx = map.latLngToLayerPoint(map.getCenter());
+                    mapOffset = { x: markerPx.x - centerPx.x, y: markerPx.y - centerPx.y };
+                });
+            } else {
+                shipCircle.setLatLng([lat, lon]);
+            }
+
             const dist = (sog * (vectorMinutes / 60));
             const dest = calculateDestination(lat, lon, cog, dist);
             if (!vectorLine) {
                 vectorLine = L.polyline([[lat, lon], dest], {color: '#000000', weight: 3}).addTo(map);
-            } else { vectorLine.setLatLngs([[lat, lon], dest]); }
+            } else {
+                vectorLine.setLatLngs([[lat, lon], dest]);
+            }
 
             if (!shipCircle.isPopupOpen()) {
                 const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(3);
                 const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(3);
-                shipCircle.bindPopup(`
-                    <div class="vector-popup">
-                        <b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'} ${lonD}°${lonM}'${lon>=0?'E':'W'}<br>
-                        <b>SOG:</b> ${sog.toFixed(1)} kn (avg)<br>
-                        Vector (min): <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value">
-                    </div>
-                `, { autoPan: false });
+                shipCircle.bindPopup(`<div class="vector-popup"><b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'}<br>${lonD}°${lonM}'${lon>=0?'E':'W'}<hr>Vector (min): <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value"></div>`, { autoPan: false });
+            }
+
+            // Kaart centreren rekening houdend met offset
+            if (mapOffset) {
+                const targetPx = map.latLngToLayerPoint([lat, lon]);
+                const newCenterPx = L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y);
+                const newCenterLatLng = map.layerPointToLatLng(newCenterPx);
+                map.setView(newCenterLatLng, map.getZoom(), { animate: false });
+            } else {
                 map.panTo([lat, lon], { animate: false });
             }
         }
 
-        function checkAllBisectors(lat, lon) {
-            let changed = false;
-            while (activeWpIndex < waypoints.length - 1) {
-                const pPrev = (activeWpIndex === 0 && shipPos) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
-                const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
-                const pNext = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
-
-                if (isPassedBisector(lat, lon, pPrev, pCurr, pNext)) {
-                    activeWpIndex++;
-                    changed = true;
-                    playArrivalBeep();
-                } else { break; }
+        function calculateNavData(lat, lon, sog) {
+            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.2) {
+                document.getElementById('ttg').innerText = "00:00";
+                document.getElementById('eta').innerText = "--:--";
+                document.getElementById('wp-info').innerText = waypoints.length > 0 ? `WP ${activeWpIndex + 1}` : "--";
+                return;
             }
-            if (changed) updateRouteDisplay();
-        }
-
-        function isPassedBisector(lat, lon, p1, p2, p3) {
-            const b1 = getBearing(p1[0], p1[1], p2[0], p2[1]);
-            const b2 = getBearing(p2[0], p2[1], p3[0], p3[1]);
-            let bisect = (b1 + b2) / 2 + 90;
-            const bearingToShip = getBearing(p2[0], p2[1], lat, lon);
-            let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
             
-            // Afstand marge 0.5 NM en hoek-check
-            const distToWp = map.distance([lat, lon], p2) / 1852;
-            return (distToWp < 0.5 && diff > 90);
-        }
-
-        function calculateETA(lat, lon, sog) {
-            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.5) {
-                document.getElementById('eta').innerText = "--:--"; return;
-            }
             let d = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
             for (let i = activeWpIndex; i < waypoints.length - 1; i++) {
                 d += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
             }
-            const hours = (d / 1852) / sog;
-            const eta = new Date(Date.now() + hours * 3600000);
+
+            const hoursTotal = (d / 1852) / sog;
+            const h = Math.floor(hoursTotal), m = Math.floor((hoursTotal - h) * 60);
+            document.getElementById('ttg').innerText = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+            
+            const eta = new Date(Date.now() + hoursTotal * 3600000);
             document.getElementById('eta').innerText = eta.getHours().toString().padStart(2, '0') + ":" + eta.getMinutes().toString().padStart(2, '0');
             document.getElementById('wp-info').innerText = `WP ${activeWpIndex + 1}`;
         }
 
-        function getBearing(lat1, lon1, lat2, lon2) {
-            const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
-            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
-            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        function updateRouteDisplay() {
+            routeLines.forEach(l => map.removeLayer(l)); wpMarkers.forEach(m => map.removeLayer(m));
+            routeLines = []; wpMarkers = [];
+            waypoints.forEach((wp, i) => {
+                const isActief = (i === activeWpIndex);
+                const color = (i < activeWpIndex) ? '#555' : (isActief ? '#ff9f1c' : 'red');
+                
+                const m = L.circleMarker([wp.lat, wp.lng], { radius: isActief ? 8 : 6, color: color, interactive: true }).addTo(map);
+
+                let pressTimer;
+                m.on('mousedown touchstart', (e) => {
+                    pressTimer = window.setTimeout(() => { makeWaypointDraggable(m, i); }, 1000);
+                });
+                m.on('mouseup touchend', () => { clearTimeout(pressTimer); });
+
+                m.bindPopup(`
+                    <div class="wp-popup" style="color:black">
+                        <b>WP ${i+1}</b><br>
+                        <button class="btn" onclick="setActiveWp(${i})">📍 Activeer</button>
+                        <button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button>
+                    </div>
+                `);
+                wpMarkers.push(m);
+                if (i < waypoints.length - 1) {
+                    const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: color, weight: 3}).addTo(map);
+                    routeLines.push(l);
+                }
+            });
         }
+
+        function makeWaypointDraggable(marker, index) {
+            map.removeLayer(marker);
+            const dragM = L.marker(marker.getLatLng(), {draggable: true}).addTo(map);
+            dragM.on('dragend', (e) => {
+                waypoints[index].lat = e.target.getLatLng().lat;
+                waypoints[index].lng = e.target.getLatLng().lng;
+                updateRouteDisplay();
+            });
+        }
+
+        window.setActiveWp = function(i) { activeWpIndex = i; updateRouteDisplay(); map.closePopup(); };
+        window.removeWaypoint = function(i) { 
+            waypoints.splice(i, 1); 
+            if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1);
+            updateRouteDisplay(); map.closePopup(); 
+        };
 
         function calculateDestination(lat, lon, brng, dist) {
             const R = 3440.065; const ad = dist / R;
-            const la1 = lat * Math.PI / 180; const lo1 = lon * Math.PI / 180; const br = brng * Math.PI / 180;
+            const la1 = lat * Math.PI / 180, lo1 = lon * Math.PI / 180, br = brng * Math.PI / 180;
             const la2 = Math.asin(Math.sin(la1) * Math.cos(ad) + Math.cos(la1) * Math.sin(ad) * Math.cos(br));
             const lo2 = lo1 + Math.atan2(Math.sin(br) * Math.sin(ad) * Math.cos(la1), Math.cos(ad) - Math.sin(la1) * Math.sin(la2));
             return [la2 * 180 / Math.PI, lo2 * 180 / Math.PI];
@@ -228,30 +235,19 @@
                 waypoints.push({lat: parseFloat(pos.getAttribute("lat")), lng: parseFloat(pos.getAttribute("lon"))});
             }
             updateRouteDisplay();
-            
-            // Na laden direct naar juiste plek focussen
-            if (shipPos) map.panTo(shipPos);
-            else if (waypoints.length > 0) map.panTo([waypoints[0].lat, waypoints[0].lng]);
         };
 
-        function updateRouteDisplay() {
-            routeLines.forEach(l => map.removeLayer(l)); wpMarkers.forEach(m => map.removeLayer(m));
-            routeLines = []; wpMarkers = [];
-            waypoints.forEach((wp, i) => {
-                const color = (i < activeWpIndex) ? '#555' : (i === activeWpIndex ? '#ff9f1c' : 'red');
-                const m = L.circleMarker([wp.lat, wp.lng], {radius: 5, color: color}).addTo(map);
-                m.bindPopup(`WP ${i+1}<br><button onclick="activeWpIndex=${i}; updateRouteDisplay();">📍 Activeer</button>`);
-                wpMarkers.push(m);
-                if (i < waypoints.length - 1) {
-                    const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: color, weight: 3}).addTo(map);
-                    routeLines.push(l);
-                }
-            });
-        }
-
-        window.nextActiveWP = function() { activeWpIndex++; updateRouteDisplay(); };
+        window.nextActiveWP = function() { activeWpIndex = (activeWpIndex + 1) % waypoints.length; updateRouteDisplay(); };
         window.clearRoute = function() { waypoints = []; activeWpIndex = 0; updateRouteDisplay(); };
         function changeLayer(v) { if(v==='sat') L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(map); else location.reload(); }
+        function saveRouteRTZ() {
+            if(waypoints.length === 0) return;
+            let n = prompt("Bestandsnaam:", "Route"); if(!n) return;
+            let xml = `<?xml version="1.0" encoding="UTF-8"?><route version="1.0" xmlns="http://www.cirm.org/RTZ/1/0"><routeInfo routeName="${n}"/><waypoints>`; 
+            waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/><leg/></waypoint>`; }); 
+            xml += `</waypoints></route>`; 
+            let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], {type: "application/xml"})); a.download = n + ".rtz"; a.click(); 
+        }
     </script>
 </body>
 </html>
