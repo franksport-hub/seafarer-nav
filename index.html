@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v4.5</title>
+    <title>Seafarer Nav v4.6</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b132b; color: white; font-family: 'Segoe UI', sans-serif; }
-        #map { height: 100%; width: 100%; z-index: 1; }
+        #map { height: 100%; width: 100%; z-index: 1; background: #001220; }
         .panel { position: absolute; background: rgba(20, 30, 48, 0.95); padding: 12px; border-radius: 8px; z-index: 1000; border: 1px solid #5bc0be; transition: all 0.3s ease; }
         #planner-panel { top: 10px; right: 10px; width: 240px; }
-        #planner-panel.minimized { width: 44px; height: 44px; padding: 0; overflow: hidden; }
-        .hamburger-icon { display: none; width: 44px; height: 44px; line-height: 44px; text-align: center; font-size: 24px; cursor: pointer; background: #3a506b; }
+        #planner-panel.minimized { width: 44px; height: 44px; padding: 0; overflow: hidden; border: 2px solid #5bc0be; }
+        .hamburger-icon { display: none; width: 44px; height: 44px; line-height: 44px; text-align: center; font-size: 24px; cursor: pointer; background: #1c2541; }
         #planner-panel.minimized .hamburger-icon { display: block; }
         #planner-panel.minimized .panel-content { display: none; }
         .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5bc0be; margin-bottom: 10px; padding-bottom: 5px; font-weight: bold; }
-        #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 750px; display: none; justify-content: space-around; text-align: center; }
+        #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 750px; display: none; justify-content: space-around; text-align: center; pointer-events: none; }
         .monitor-item { flex: 1; border-right: 1px solid #3a506b; }
         .monitor-item:last-child { border-right: none; }
         .val { font-size: 18px; font-weight: bold; color: #5bc0be; display: block; }
@@ -34,7 +34,7 @@
     <div id="planner-panel" class="panel">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header"><span>Seafarer Nav v4.5</span><span onclick="toggleMenu()" style="cursor:pointer">×</span></div>
+            <div class="panel-header"><span>Seafarer Nav v4.6</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
@@ -42,8 +42,12 @@
             </div>
             <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
-            <select id="layerSelect" class="btn" onchange="changeLayer(this.value)"><option value="onc">Kaart: OpenNautical</option><option value="sat">Kaart: Satelliet</option></select>
+            <select id="layerSelect" class="btn" onchange="changeLayer(this.value)">
+                <option value="onc">Kaart: OpenNautical</option>
+                <option value="sat">Kaart: Satelliet + Seamarks</option>
+            </select>
             <button class="btn btn-start" id="monitorBtn" onclick="toggleMonitoring()">📡 START MONITORING</button>
+            <div id="wake-status" style="font-size: 9px; text-align: center; margin-top: 5px; color: #5bc0be;"></div>
         </div>
     </div>
 
@@ -58,24 +62,57 @@
     <div id="map"></div>
 
     <script>
+        // --- KAART INITIALISATIE ---
         var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 });
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [];
         var shipPos = null, vectorLine = null, shipCircle = null, isMonitoring = false, watchId = null;
-        var mapOffset = null; // Voor off-center positie
+        var mapOffset = null; 
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        // Lagen Definities
+        const baseLayers = {
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+            seamarks: L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', { maxZoom: 18 }),
+            sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
+        };
+
+        var currentBase = L.layerGroup([baseLayers.osm, baseLayers.seamarks]).addTo(map);
+
+        function changeLayer(type) {
+            map.removeLayer(currentBase);
+            if (type === 'onc') {
+                currentBase = L.layerGroup([baseLayers.osm, baseLayers.seamarks]).addTo(map);
+            } else {
+                currentBase = L.layerGroup([baseLayers.sat, baseLayers.seamarks]).addTo(map);
+            }
+        }
+
+        // --- WAKE LOCK (Houdt scherm aan) ---
+        let wakeLock = null;
+        const requestWakeLock = async () => {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    document.getElementById('wake-status').innerText = "Scherm: Altijd Actief ✅";
+                }
+            } catch (err) { console.error(`${err.name}, ${err.message}`); }
+        };
+
+        // Re-activeer wakelock als tab weer zichtbaar wordt
+        document.addEventListener('visibilitychange', () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
+        });
 
         function toggleMenu() { document.getElementById('planner-panel').classList.toggle('minimized'); }
 
         function toggleMonitoring() {
             if (!isMonitoring) {
                 isMonitoring = true;
-                mapOffset = null; // Reset offset bij start
+                requestWakeLock();
                 document.getElementById('monitorBtn').innerText = "🛑 STOP MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff4d4d";
                 document.getElementById('monitor-bar').style.display = "flex";
-                watchId = navigator.geolocation.watchPosition(updatePosition, null, {enableHighAccuracy: true});
+                watchId = navigator.geolocation.watchPosition(updatePosition, (err) => console.log(err), {enableHighAccuracy: true});
             } else { location.reload(); }
         }
 
@@ -97,17 +134,16 @@
         }
 
         function updateShipGraphics(lat, lon, cog, sog) {
-            if (!shipCircle) {
-                shipCircle = L.marker([lat, lon], {
-                    draggable: true,
-                    icon: L.divIcon({
-                        className: 'ship-div',
-                        html: '<div style="width:20px; height:20px; border:3px solid black; border-radius:50%;"></div>',
-                        iconSize: [20, 20], iconAnchor: [10, 10]
-                    })
-                }).addTo(map);
+            // De Ring (Zwarte cirkel)
+            const ringIcon = L.divIcon({
+                className: 'custom-ship-icon',
+                html: '<div style="width:16px; height:16px; border:3px solid black; border-radius:50%; background:transparent;"></div>',
+                iconSize: [22, 22], iconAnchor: [11, 11]
+            });
 
-                // Off-center logica: bereken offset na slepen
+            if (!shipCircle) {
+                shipCircle = L.marker([lat, lon], { draggable: true, icon: ringIcon, zIndexOffset: 1000 }).addTo(map);
+                
                 shipCircle.on('dragend', function(e) {
                     const markerPx = map.latLngToLayerPoint(e.target.getLatLng());
                     const centerPx = map.latLngToLayerPoint(map.getCenter());
@@ -117,21 +153,24 @@
                 shipCircle.setLatLng([lat, lon]);
             }
 
+            // De Vector pijl (Start exact in het midden van de ring)
             const dist = (sog * (vectorMinutes / 60));
             const dest = calculateDestination(lat, lon, cog, dist);
+            
             if (!vectorLine) {
-                vectorLine = L.polyline([[lat, lon], dest], {color: '#000000', weight: 3}).addTo(map);
+                vectorLine = L.polyline([[lat, lon], dest], {color: '#000000', weight: 3, lineCap: 'round'}).addTo(map);
             } else {
                 vectorLine.setLatLngs([[lat, lon], dest]);
             }
 
-            if (!shipCircle.isPopupOpen()) {
+            // Popup afhandeling
+            if (!shipCircle.getPopup() || !shipCircle.isPopupOpen()) {
                 const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(3);
                 const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(3);
-                shipCircle.bindPopup(`<div class="vector-popup"><b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'}<br>${lonD}°${lonM}'${lon>=0?'E':'W'}<hr>Vector (min): <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value"></div>`, { autoPan: false });
+                shipCircle.bindPopup(`<div class="vector-popup"><b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'}<br>${lonD}°${lonM}'${lon>=0?'E':'W'}<hr>Vector (min): <input type="number" id="vMinInput" value="${vectorMinutes}" onchange="vectorMinutes=this.value"></div>`, { autoPan: false });
             }
 
-            // Kaart centreren rekening houdend met offset
+            // Map focus met offset
             if (mapOffset) {
                 const targetPx = map.latLngToLayerPoint([lat, lon]);
                 const newCenterPx = L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y);
@@ -170,22 +209,13 @@
             waypoints.forEach((wp, i) => {
                 const isActief = (i === activeWpIndex);
                 const color = (i < activeWpIndex) ? '#555' : (isActief ? '#ff9f1c' : 'red');
-                
-                const m = L.circleMarker([wp.lat, wp.lng], { radius: isActief ? 8 : 6, color: color, interactive: true }).addTo(map);
+                const m = L.circleMarker([wp.lat, wp.lng], { radius: isActief ? 8 : 6, color: color, interactive: true, fillOpacity: 0.6 }).addTo(map);
 
                 let pressTimer;
-                m.on('mousedown touchstart', (e) => {
-                    pressTimer = window.setTimeout(() => { makeWaypointDraggable(m, i); }, 1000);
-                });
+                m.on('mousedown touchstart', (e) => { pressTimer = window.setTimeout(() => { makeWaypointDraggable(m, i); }, 1000); });
                 m.on('mouseup touchend', () => { clearTimeout(pressTimer); });
 
-                m.bindPopup(`
-                    <div class="wp-popup" style="color:black">
-                        <b>WP ${i+1}</b><br>
-                        <button class="btn" onclick="setActiveWp(${i})">📍 Activeer</button>
-                        <button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button>
-                    </div>
-                `);
+                m.bindPopup(`<div class="wp-popup" style="color:black"><b>WP ${i+1}</b><br><button class="btn" onclick="setActiveWp(${i})">📍 Activeer</button><button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button></div>`);
                 wpMarkers.push(m);
                 if (i < waypoints.length - 1) {
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: color, weight: 3}).addTo(map);
@@ -205,11 +235,7 @@
         }
 
         window.setActiveWp = function(i) { activeWpIndex = i; updateRouteDisplay(); map.closePopup(); };
-        window.removeWaypoint = function(i) { 
-            waypoints.splice(i, 1); 
-            if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1);
-            updateRouteDisplay(); map.closePopup(); 
-        };
+        window.removeWaypoint = function(i) { waypoints.splice(i, 1); if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1); updateRouteDisplay(); map.closePopup(); };
 
         function calculateDestination(lat, lon, brng, dist) {
             const R = 3440.065; const ad = dist / R;
@@ -239,15 +265,14 @@
 
         window.nextActiveWP = function() { activeWpIndex = (activeWpIndex + 1) % waypoints.length; updateRouteDisplay(); };
         window.clearRoute = function() { waypoints = []; activeWpIndex = 0; updateRouteDisplay(); };
-        function changeLayer(v) { if(v==='sat') L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(map); else location.reload(); }
-        function saveRouteRTZ() {
+        window.saveRouteRTZ = function() {
             if(waypoints.length === 0) return;
             let n = prompt("Bestandsnaam:", "Route"); if(!n) return;
             let xml = `<?xml version="1.0" encoding="UTF-8"?><route version="1.0" xmlns="http://www.cirm.org/RTZ/1/0"><routeInfo routeName="${n}"/><waypoints>`; 
             waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/><leg/></waypoint>`; }); 
             xml += `</waypoints></route>`; 
             let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], {type: "application/xml"})); a.download = n + ".rtz"; a.click(); 
-        }
+        };
     </script>
 </body>
 </html>
