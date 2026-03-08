@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v4.0</title>
+    <title>Seafarer Nav v4.1</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -22,21 +22,20 @@
         .label { font-size: 10px; text-transform: uppercase; color: #a1a1aa; }
         .btn { display: block; width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 12px; background: #3a506b; color: white; }
         .btn-start { background: #ff9f1c; color: #0b132b; }
-        .wp-popup { color: black; font-size: 14px; }
-        .vector-popup { color: black; line-height: 1.6; }
-        input[type="number"] { width: 50px; padding: 3px; }
+        .vector-popup { color: black; line-height: 1.6; min-width: 180px; }
+        input[type="number"] { width: 60px; padding: 3px; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div id="planner-panel" class="panel">
-        <div class="panel-header">Seafarer Nav v4.0</div>
+        <div class="panel-header">Seafarer Nav v4.1</div>
         <div style="display:flex; gap:5px;">
             <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
             <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
             <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip" style="display:none;" onchange="loadRouteRTZ(event)">
         </div>
-        <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Skip naar Volgend WP</button>
+        <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Handmatig Volgend WP</button>
         <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
         
         <select id="layerSelect" class="btn" onchange="changeLayer(this.value)" style="text-align: left;">
@@ -50,14 +49,13 @@
     <div id="monitor-bar" class="panel">
         <div class="monitor-item"><span class="label">SOG</span><span class="val" id="sog">0.0 kn</span></div>
         <div class="monitor-item"><span class="label">COG</span><span class="val" id="cog">000°</span></div>
-        <div class="monitor-item"><span class="label">Route Leg</span><span class="val" id="wp-info">--</span></div>
+        <div class="monitor-item"><span class="label">Actief</span><span class="val" id="wp-info">--</span></div>
         <div class="monitor-item"><span class="label">ETA (End)</span><span class="val" id="eta">--:--</span></div>
     </div>
 
     <div id="map"></div>
 
     <script>
-        // --- NAVIGATIE VARIABELEN ---
         var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 });
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6;
@@ -66,20 +64,18 @@
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // --- AUDIO (Dubbel piepje) ---
+        // --- AUDIO ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        function beep(freq, duration, delay) {
-            setTimeout(() => {
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.connect(gain); gain.connect(audioCtx.destination);
-                osc.frequency.value = freq; gain.gain.value = 0.1;
-                osc.start(); osc.stop(audioCtx.currentTime + duration);
-            }, delay);
+        function playArrivalBeep() { 
+            const b = (f, d, t) => {
+                const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+                o.connect(g); g.connect(audioCtx.destination);
+                o.frequency.value = f; g.gain.value = 0.1;
+                o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + d);
+            };
+            b(880, 0.1, 0); b(880, 0.1, 0.2);
         }
-        function playArrivalBeep() { beep(880, 0.1, 0); beep(880, 0.1, 200); }
 
-        // --- GPS & VECTOR ---
         function toggleMonitoring() {
             if (!isMonitoring) {
                 if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -88,11 +84,7 @@
                 document.getElementById('monitorBtn').style.background = "#ff4d4d";
                 document.getElementById('monitor-bar').style.display = "flex";
                 watchId = navigator.geolocation.watchPosition(updatePosition, null, {enableHighAccuracy: true});
-            } else {
-                isMonitoring = false;
-                navigator.geolocation.clearWatch(watchId);
-                location.reload(); 
-            }
+            } else { location.reload(); }
         }
 
         function updatePosition(pos) {
@@ -101,85 +93,109 @@
             const cog = pos.coords.heading || 0;
             shipPos = [lat, lon];
 
-            // Update Dashboard
             document.getElementById('sog').innerText = sog.toFixed(1) + " kn";
             document.getElementById('cog').innerText = Math.round(cog).toString().padStart(3, '0') + "°";
             
-            updateVector(lat, lon, cog, sog);
-            checkBisector(lat, lon);
-            calculateETA(lat, lon, sog);
-        }
-
-        function updateVector(lat, lon, cog, sog) {
-            if (shipCircle) map.removeLayer(shipCircle);
-            if (vectorLine) map.removeLayer(vectorLine);
-
-            // De Cirkel
-            shipCircle = L.circleMarker([lat, lon], { radius: 8, color: '#00d1ff', fillOpacity: 0.8 }).addTo(map);
+            updateShipGraphics(lat, lon, cog, sog);
             
-            // Coördinaten naar DD MM.m
-            const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(1);
-            const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(1);
-            const posStr = `${latD}°${latM}'${lat >=0?'N':'S'} ${lonD}°${lonM}'${lon >=0?'E':'W'}`;
-
-            shipCircle.bindPopup(`
-                <div class="vector-popup">
-                    <b>Positie:</b> ${posStr}<br>
-                    <b>COG:</b> ${Math.round(cog)}° | <b>SOG:</b> ${sog.toFixed(1)} kn<br>
-                    <b>Vector lengte (min):</b> 
-                    <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value; updatePosition(lastPos)">
-                </div>
-            `);
-
-            // De Pijl (Vector)
-            const dist = (sog * (vectorMinutes / 60)); // NM
-            const dest = calculateDestination(lat, lon, cog, dist);
-            vectorLine = L.polyline([[lat, lon], dest], {color: '#00d1ff', weight: 4}).addTo(map);
-            map.panTo([lat, lon]);
-        }
-
-        // --- BISECTRICE LOGICA ---
-        function checkBisector(lat, lon) {
-            if (waypoints.length < 2 || activeWpIndex >= waypoints.length - 1) return;
-
-            const p1 = (activeWpIndex === 0) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
-            const p2 = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
-            const p3 = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
-
-            // Bereken koersen tussen legs
-            const bearing1 = getBearing(p1[0], p1[1], p2[0], p2[1]);
-            const bearing2 = getBearing(p2[0], p2[1], p3[0], p3[1]);
-            
-            // Bisectrice hoek
-            let bisectorAngle = (bearing1 + bearing2) / 2 + 90;
-            
-            // Afstand tot waypoint (0.2 NM zone)
-            const distToWp = map.distance([lat, lon], p2) / 1852;
-            
-            // Eenvoudige check: als we voorbij de denkbeeldige lijn van het waypoint zijn
-            if (distToWp < 0.2) {
-                playArrivalBeep();
-                activeWpIndex++;
-                updateRouteDisplay();
+            // Stap 3: Recursieve bissectrice check
+            if (waypoints.length > 0) {
+                checkAllBisectors(lat, lon);
+                calculateETA(lat, lon, sog);
             }
+        }
+
+        function updateShipGraphics(lat, lon, cog, sog) {
+            // De Ring (Zwarte buitenrand, transparant binnen)
+            if (!shipCircle) {
+                shipCircle = L.circleMarker([lat, lon], { 
+                    radius: 10, 
+                    color: '#000000', 
+                    weight: 3, 
+                    fillOpacity: 0 
+                }).addTo(map);
+            } else {
+                shipCircle.setLatLng([lat, lon]);
+            }
+
+            // De Vector
+            const dist = (sog * (vectorMinutes / 60));
+            const dest = calculateDestination(lat, lon, cog, dist);
+            if (!vectorLine) {
+                vectorLine = L.polyline([[lat, lon], dest], {color: '#00d1ff', weight: 4}).addTo(map);
+            } else {
+                vectorLine.setLatLngs([[lat, lon], dest]);
+            }
+
+            // Popup fix: update inhoud alleen als hij NIET open is, of via een specifieate button
+            if (!shipCircle.getPopup() || !shipCircle.isPopupOpen()) {
+                const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(3);
+                const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(3);
+                const posStr = `${latD}°${latM}'${lat >=0?'N':'S'} ${lonD}°${lonM}'${lon >=0?'E':'W'}`;
+                
+                shipCircle.bindPopup(`
+                    <div class="vector-popup">
+                        <b>Positie:</b><br>${posStr}<br>
+                        <b>SOG:</b> ${sog.toFixed(1)} kn | <b>COG:</b> ${Math.round(cog)}°<hr>
+                        Vector (min): <input type="number" id="vMinInput" value="${vectorMinutes}" onchange="vectorMinutes=this.value">
+                    </div>
+                `, { autoPan: false });
+            }
+
+            // Alleen centreren als de popup niet open is (voorkomt verspringen)
+            if (!shipCircle.isPopupOpen()) {
+                map.panTo([lat, lon], { animate: false });
+            }
+        }
+
+        // --- STAP 3: RECURSIEVE CHECK ---
+        function checkAllBisectors(lat, lon) {
+            let changed = false;
+            // Loop door de route om te kijken of we punten moeten skippen
+            while (activeWpIndex < waypoints.length - 1) {
+                const pPrev = (activeWpIndex === 0) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
+                const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
+                const pNext = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
+
+                // Bereken of we de 'hoek' van het huidige WP al voorbij zijn
+                if (isPassedBisector(lat, lon, pPrev, pCurr, pNext)) {
+                    activeWpIndex++;
+                    changed = true;
+                    playArrivalBeep();
+                } else {
+                    break; // We zijn nog niet voorbij dit punt
+                }
+            }
+            if (changed) updateRouteDisplay();
+        }
+
+        function isPassedBisector(lat, lon, p1, p2, p3) {
+            // Afstand check: alleen binnen 0.5 NM van het WP kijken we naar de bissectrice
+            const distToWp = map.distance([lat, lon], p2) / 1852;
+            if (distToWp > 0.5) return false;
+
+            const b1 = getBearing(p1[0], p1[1], p2[0], p2[1]);
+            const b2 = getBearing(p2[0], p2[1], p3[0], p3[1]);
+            let bisect = (b1 + b2) / 2 + 90; // De lijn die de hoek doorsnijdt
+            
+            const bearingToShip = getBearing(p2[0], p2[1], lat, lon);
+            // Als het verschil in hoek tussen de bissectrice en het schip klein wordt, zijn we er
+            let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
+            return diff > 90; // Voorbij de lijn
         }
 
         function calculateETA(lat, lon, sog) {
-            if (waypoints.length === 0 || sog < 0.5) {
+            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.5) {
                 document.getElementById('eta').innerText = "--:--";
                 return;
             }
-
-            let totalDist = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
+            let d = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
             for (let i = activeWpIndex; i < waypoints.length - 1; i++) {
-                totalDist += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
+                d += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
             }
-
-            const distNM = totalDist / 1852;
-            const hoursToTravel = distNM / sog;
-            const etaDate = new Date(Date.now() + hoursToTravel * 3600000);
-            
-            document.getElementById('eta').innerText = etaDate.getHours().toString().padStart(2, '0') + ":" + etaDate.getMinutes().toString().padStart(2, '0');
+            const hours = (d / 1852) / sog;
+            const eta = new Date(Date.now() + hours * 3600000);
+            document.getElementById('eta').innerText = eta.getHours().toString().padStart(2, '0') + ":" + eta.getMinutes().toString().padStart(2, '0');
             document.getElementById('wp-info').innerText = `WP ${activeWpIndex + 1}`;
         }
 
@@ -191,29 +207,22 @@
         }
 
         function calculateDestination(lat, lon, brng, dist) {
-            const R = 3440.065; // Radius aarde in NM
-            const ad = dist / R;
-            const la1 = lat * Math.PI / 180;
-            const lo1 = lon * Math.PI / 180;
-            const br = brng * Math.PI / 180;
+            const R = 3440.065; const ad = dist / R;
+            const la1 = lat * Math.PI / 180; const lo1 = lon * Math.PI / 180; const br = brng * Math.PI / 180;
             const la2 = Math.asin(Math.sin(la1) * Math.cos(ad) + Math.cos(la1) * Math.sin(ad) * Math.cos(br));
             const lo2 = lo1 + Math.atan2(Math.sin(br) * Math.sin(ad) * Math.cos(la1), Math.cos(ad) - Math.sin(la1) * Math.sin(la2));
             return [la2 * 180 / Math.PI, lo2 * 180 / Math.PI];
         }
 
-        // --- ROUTE HANDLERS ---
         window.loadRouteRTZ = async function(e) {
-            const file = e.target.files[0];
-            const zip = new JSZip();
+            const file = e.target.files[0]; if (!file) return;
             let text = "";
             if (file.name.endsWith('.voy')) {
-                const c = await zip.loadAsync(file);
+                const zip = new JSZip(); const c = await zip.loadAsync(file);
                 const r = Object.keys(c.files).find(n => n.endsWith('.rtz'));
                 text = await c.files[r].async("text");
             } else { text = await file.text(); }
-            
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, "text/xml");
+            const parser = new DOMParser(); const xml = parser.parseFromString(text, "text/xml");
             const wps = xml.getElementsByTagName("waypoint");
             waypoints = []; activeWpIndex = 0;
             for (let i = 0; i < wps.length; i++) {
@@ -224,14 +233,12 @@
         };
 
         function updateRouteDisplay() {
-            routeLines.forEach(l => map.removeLayer(l));
-            wpMarkers.forEach(m => map.removeLayer(m));
+            routeLines.forEach(l => map.removeLayer(l)); wpMarkers.forEach(m => map.removeLayer(m));
             routeLines = []; wpMarkers = [];
-
             waypoints.forEach((wp, i) => {
                 const color = (i < activeWpIndex) ? '#555' : (i === activeWpIndex ? '#ff9f1c' : 'red');
-                const m = L.circleMarker([wp.lat, wp.lng], {radius: 6, color: color}).addTo(map);
-                m.bindPopup(`<div class="wp-popup">WP ${i+1}<br><button onclick="activeWpIndex=${i}; updateRouteDisplay();">📍 Activeer</button></div>`);
+                const m = L.circleMarker([wp.lat, wp.lng], {radius: 5, color: color}).addTo(map);
+                m.bindPopup(`WP ${i+1}<br><button onclick="activeWpIndex=${i}; updateRouteDisplay();">📍 Activeer</button>`);
                 wpMarkers.push(m);
                 if (i < waypoints.length - 1) {
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: color, weight: 3}).addTo(map);
@@ -242,10 +249,7 @@
 
         window.nextActiveWP = function() { activeWpIndex++; updateRouteDisplay(); };
         window.clearRoute = function() { waypoints = []; updateRouteDisplay(); };
-        function changeLayer(v) { 
-            if(v==='sat') L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(map);
-            else location.reload();
-        }
+        function changeLayer(v) { if(v==='sat') L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(map); else location.reload(); }
     </script>
 </body>
 </html>
