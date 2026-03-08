@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v4.8</title>
+    <title>Seafarer Nav v4.9</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -27,7 +27,6 @@
         .btn-danger { background: #ff4d4d !important; color: white; }
         .wp-popup { color: black; line-height: 1.2; min-width: 180px; font-size: 12px; }
         .wp-popup input { width: 100%; margin: 5px 0; padding: 4px; box-sizing: border-box; }
-        .wp-popup b { color: #1c2541; }
     </style>
 </head>
 <body>
@@ -35,13 +34,13 @@
     <div id="planner-panel" class="panel">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header"><span>Seafarer Nav v4.8</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
+            <div class="panel-header"><span>Seafarer Nav v4.9</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
                 <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip" style="display:none;" onchange="loadRouteRTZ(event)">
             </div>
-            <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
+            <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Handmatig Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
             <select id="layerSelect" class="btn" onchange="changeLayer(this.value)">
                 <option value="onc">Kaart: OpenNautical</option>
@@ -63,7 +62,8 @@
     <div id="map"></div>
 
     <script>
-        var map = L.map('map', { zoomControl: false, center: [53.9, 9.15], zoom: 11 });
+        // Stap 3: Noordzee Overzicht (Zoom 6, gecentreerd op Noordzee)
+        var map = L.map('map', { zoomControl: false, center: [54.0, 4.0], zoom: 6 });
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [], lastSog = 0;
         var shipPos = null, vectorLine = null, shipCircle = null, isMonitoring = false, watchId = null;
@@ -85,9 +85,20 @@
             else currentBase = L.layerGroup([baseLayers.sat, baseLayers.seamarks]).addTo(map);
         }
 
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playArrivalBeep() { 
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const b = (f, d, t) => {
+                const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+                o.connect(g); g.connect(audioCtx.destination);
+                o.frequency.value = f; g.gain.value = 0.1;
+                o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + d);
+            };
+            b(880, 0.1, 0); b(880, 0.1, 0.2);
+        }
+
         function toggleMenu() { document.getElementById('planner-panel').classList.toggle('minimized'); }
 
-        // --- STAP 1: STOP ZONDER RELOAD ---
         function toggleMonitoring() {
             if (!isMonitoring) {
                 isMonitoring = true;
@@ -100,7 +111,6 @@
                 navigator.geolocation.clearWatch(watchId);
                 document.getElementById('monitorBtn').innerText = "📡 START MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff9f1c";
-                // De route en positie blijven nu gewoon staan.
             }
         }
 
@@ -114,14 +124,21 @@
             lastSog = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length;
             document.getElementById('sog').innerText = lastSog.toFixed(1) + " kn";
             document.getElementById('cog').innerText = Math.round(cog).toString().padStart(3, '0') + "°";
+            
             updateShipGraphics(lat, lon, cog, lastSog);
-            calculateNavData(lat, lon, lastSog);
+            
+            if (waypoints.length > 0) {
+                // Stap 2: Bissectrice Automatisering
+                checkBisectorAuto(lat, lon);
+                calculateNavData(lat, lon, lastSog);
+            }
         }
 
         function updateShipGraphics(lat, lon, cog, sog) {
+            // Stap 1: Fel Groen (#00FF00)
             const ringIcon = L.divIcon({
                 className: 'ship-ring',
-                html: '<div style="width:16px; height:16px; border:3px solid #ff9f1c; border-radius:50%;"></div>',
+                html: '<div style="width:16px; height:16px; border:3px solid #00FF00; border-radius:50%;"></div>',
                 iconSize: [22, 22], iconAnchor: [11, 11]
             });
             if (!shipCircle) {
@@ -135,8 +152,14 @@
 
             const dist = (sog * (vectorMinutes / 60));
             const dest = calculateDestination(lat, lon, cog, dist);
-            if (!vectorLine) vectorLine = L.polyline([[lat, lon], dest], {color: '#ff9f1c', weight: 4}).addTo(map);
+            if (!vectorLine) vectorLine = L.polyline([[lat, lon], dest], {color: '#00FF00', weight: 4}).addTo(map);
             else vectorLine.setLatLngs([[lat, lon], dest]);
+
+            if (!shipCircle.isPopupOpen()) {
+                const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(3);
+                const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(3);
+                shipCircle.bindPopup(`<div class="vector-popup"><b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'}<br>${lonD}°${lonM}'${lon>=0?'E':'W'}<hr>Vector (min): <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value"></div>`, { autoPan: false });
+            }
 
             if (mapOffset) {
                 const targetPx = map.latLngToLayerPoint([lat, lon]);
@@ -145,29 +168,48 @@
             } else map.panTo([lat, lon], { animate: false });
         }
 
-        // --- STAP 2 & WP DETAILS ---
-        function updateRouteDisplay() {
-            routeLines.forEach(l => map.removeLayer(l)); 
-            wpMarkers.forEach(m => map.removeLayer(m));
-            routeLines = []; wpMarkers = [];
+        // --- STAP 2: AUTOMATISCHE WP LOGICA ---
+        function checkBisectorAuto(lat, lon) {
+            if (activeWpIndex >= waypoints.length - 1) return;
+            
+            const pPrev = (activeWpIndex === 0) ? [lat, lon] : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
+            const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
+            const pNext = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
 
+            // Bissectrice berekening
+            const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
+            const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
+            let bisect = (b1 + b2) / 2 + 90;
+            const bearingToShip = getBearing(pCurr[0], pCurr[1], lat, lon);
+            let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
+            
+            const distToWp = map.distance([lat, lon], pCurr) / 1852;
+
+            if (distToWp < 0.5 && diff > 90) {
+                activeWpIndex++;
+                playArrivalBeep();
+                updateRouteDisplay();
+            }
+        }
+
+        function calculateNavData(lat, lon, sog) {
+            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.2) return;
+            let d = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
+            for (let i = activeWpIndex; i < waypoints.length - 1; i++) d += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
+            const hoursTotal = (d / 1852) / sog;
+            const h = Math.floor(hoursTotal), m = Math.floor((hoursTotal - h) * 60);
+            document.getElementById('ttg').innerText = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+            const eta = new Date(Date.now() + hoursTotal * 3600000);
+            document.getElementById('eta').innerText = eta.getHours().toString().padStart(2, '0') + ":" + eta.getMinutes().toString().padStart(2, '0');
+            document.getElementById('wp-info').innerText = `WP ${activeWpIndex + 1}`;
+        }
+
+        function updateRouteDisplay() {
+            routeLines.forEach(l => map.removeLayer(l)); wpMarkers.forEach(m => map.removeLayer(m));
+            routeLines = []; wpMarkers = [];
             waypoints.forEach((wp, i) => {
                 const isTarget = (i === activeWpIndex);
                 const color = (i < activeWpIndex) ? '#555' : (isTarget ? '#ff9f1c' : 'red');
-                
-                // Bereken ETA voor dit specifieke WP
-                let etaStr = "--:--";
-                if (shipPos && lastSog > 0.1) {
-                    let d = map.distance(shipPos, [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
-                    for (let j = activeWpIndex; j < i; j++) {
-                        d += map.distance([waypoints[j].lat, waypoints[j].lng], [waypoints[j+1].lat, waypoints[j+1].lng]);
-                    }
-                    const hours = (d / 1852) / lastSog;
-                    const etaDate = new Date(Date.now() + hours * 3600000);
-                    etaStr = etaDate.getHours().toString().padStart(2, '0') + ":" + etaDate.getMinutes().toString().padStart(2, '0');
-                }
-
-                // Marker met Drag en Tap
                 const m = L.marker([wp.lat, wp.lng], {
                     draggable: true,
                     icon: L.divIcon({
@@ -184,18 +226,7 @@
                 });
                 m.on('dragend', updateRouteDisplay);
 
-                // Menu bij aantikken
-                m.bindPopup(`
-                    <div class="wp-popup">
-                        <b>WAYPOINT ${i+1}</b><br>
-                        <small>ETA WP: ${etaStr}</small><hr>
-                        Notitie:<br>
-                        <input type="text" id="note-${i}" value="${wp.note || ''}" onchange="waypoints[${i}].note=this.value" placeholder="Bijv. Sluis bakboord...">
-                        <button class="btn" onclick="setActiveWp(${i})">📍 Activeren (Naar WP)</button>
-                        <button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button>
-                    </div>
-                `);
-
+                m.bindPopup(`<div class="wp-popup"><b>WAYPOINT ${i+1}</b><hr>Notitie:<br><input type="text" value="${wp.note || ''}" onchange="waypoints[${i}].note=this.value"><button class="btn" onclick="setActiveWp(${i})">📍 Activeren</button><button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button></div>`);
                 wpMarkers.push(m);
 
                 if (i < waypoints.length - 1) {
@@ -205,18 +236,6 @@
                     routeLines.push(l);
                 }
             });
-        }
-
-        function calculateNavData(lat, lon, sog) {
-            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.2) return;
-            let d = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
-            for (let i = activeWpIndex; i < waypoints.length - 1; i++) d += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
-            const hoursTotal = (d / 1852) / sog;
-            const h = Math.floor(hoursTotal), m = Math.floor((hoursTotal - h) * 60);
-            document.getElementById('ttg').innerText = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
-            const eta = new Date(Date.now() + hoursTotal * 3600000);
-            document.getElementById('eta').innerText = eta.getHours().toString().padStart(2, '0') + ":" + eta.getMinutes().toString().padStart(2, '0');
-            document.getElementById('wp-info').innerText = `WP ${activeWpIndex + 1}`;
         }
 
         function drawRouteOnly() {
@@ -245,6 +264,12 @@
             const la2 = Math.asin(Math.sin(la1) * Math.cos(ad) + Math.cos(la1) * Math.sin(ad) * Math.cos(br));
             const lo2 = lo1 + Math.atan2(Math.sin(br) * Math.sin(ad) * Math.cos(la1), Math.cos(ad) - Math.sin(la1) * Math.sin(la2));
             return [la2 * 180 / Math.PI, lo2 * 180 / Math.PI];
+        }
+
+        function getBearing(la1, lo1, la2, lo2) {
+            const y = Math.sin((lo2 - lo1) * Math.PI / 180) * Math.cos(la2 * Math.PI / 180);
+            const x = Math.cos(la1 * Math.PI / 180) * Math.sin(la2 * Math.PI / 180) - Math.sin(la1 * Math.PI / 180) * Math.cos(la2 * Math.PI / 180) * Math.cos((lo2 - lo1) * Math.PI / 180);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
         }
 
         window.loadRouteRTZ = async function(e) {
