@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v4.9</title>
+    <title>Seafarer Nav v5.0</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -34,7 +34,7 @@
     <div id="planner-panel" class="panel">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header"><span>Seafarer Nav v4.9</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
+            <div class="panel-header"><span>Seafarer Nav v5.0</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
@@ -62,7 +62,6 @@
     <div id="map"></div>
 
     <script>
-        // Stap 3: Noordzee Overzicht (Zoom 6, gecentreerd op Noordzee)
         var map = L.map('map', { zoomControl: false, center: [54.0, 4.0], zoom: 6 });
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [], lastSog = 0;
@@ -128,14 +127,12 @@
             updateShipGraphics(lat, lon, cog, lastSog);
             
             if (waypoints.length > 0) {
-                // Stap 2: Bissectrice Automatisering
                 checkBisectorAuto(lat, lon);
                 calculateNavData(lat, lon, lastSog);
             }
         }
 
         function updateShipGraphics(lat, lon, cog, sog) {
-            // Stap 1: Fel Groen (#00FF00)
             const ringIcon = L.divIcon({
                 className: 'ship-ring',
                 html: '<div style="width:16px; height:16px; border:3px solid #00FF00; border-radius:50%;"></div>',
@@ -168,24 +165,21 @@
             } else map.panTo([lat, lon], { animate: false });
         }
 
-        // --- STAP 2: AUTOMATISCHE WP LOGICA ---
         function checkBisectorAuto(lat, lon) {
             if (activeWpIndex >= waypoints.length - 1) return;
             
-            const pPrev = (activeWpIndex === 0) ? [lat, lon] : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
+            const pPrev = (activeWpIndex === 0 && shipPos) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
             const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
             const pNext = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
 
-            // Bissectrice berekening
             const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
             const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
             let bisect = (b1 + b2) / 2 + 90;
             const bearingToShip = getBearing(pCurr[0], pCurr[1], lat, lon);
             let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
             
-            const distToWp = map.distance([lat, lon], pCurr) / 1852;
-
-            if (distToWp < 0.5 && diff > 90) {
+            // Strikte check: alleen als we de bissectricelijn passeren (diff > 90)
+            if (diff > 90) {
                 activeWpIndex++;
                 playArrivalBeep();
                 updateRouteDisplay();
@@ -210,6 +204,19 @@
             waypoints.forEach((wp, i) => {
                 const isTarget = (i === activeWpIndex);
                 const color = (i < activeWpIndex) ? '#555' : (isTarget ? '#ff9f1c' : 'red');
+                
+                // Bereken ETA voor DIT specifieke WP voor in de popup
+                let wpEtaStr = "--:--";
+                if (shipPos && lastSog > 0.1) {
+                    let distToThisWp = map.distance(shipPos, [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
+                    for (let j = activeWpIndex; j < i; j++) {
+                        distToThisWp += map.distance([waypoints[j].lat, waypoints[j].lng], [waypoints[j+1].lat, waypoints[j+1].lng]);
+                    }
+                    const hoursToWp = (distToThisWp / 1852) / lastSog;
+                    const etaWp = new Date(Date.now() + hoursToWp * 3600000);
+                    wpEtaStr = etaWp.getHours().toString().padStart(2, '0') + ":" + etaWp.getMinutes().toString().padStart(2, '0');
+                }
+
                 const m = L.marker([wp.lat, wp.lng], {
                     draggable: true,
                     icon: L.divIcon({
@@ -226,7 +233,7 @@
                 });
                 m.on('dragend', updateRouteDisplay);
 
-                m.bindPopup(`<div class="wp-popup"><b>WAYPOINT ${i+1}</b><hr>Notitie:<br><input type="text" value="${wp.note || ''}" onchange="waypoints[${i}].note=this.value"><button class="btn" onclick="setActiveWp(${i})">📍 Activeren</button><button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button></div>`);
+                m.bindPopup(`<div class="wp-popup"><b>WAYPOINT ${i+1}</b><br><small>ETA naar dit WP: ${wpEtaStr}</small><hr>Notitie:<br><input type="text" value="${wp.note || ''}" onchange="waypoints[${i}].note=this.value"><button class="btn" onclick="setActiveWp(${i})">📍 Activeren</button><button class="btn btn-danger" onclick="removeWaypoint(${i})">🗑️ Verwijder</button></div>`);
                 wpMarkers.push(m);
 
                 if (i < waypoints.length - 1) {
