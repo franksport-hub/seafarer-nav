@@ -3,13 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v5.1</title>
+    <title>Seafarer Nav v5.2</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b132b; color: white; font-family: 'Segoe UI', sans-serif; }
         #map { height: 100%; width: 100%; z-index: 1; background: #001220; }
+        
+        /* UI Panels */
         .panel { position: absolute; background: rgba(20, 30, 48, 0.95); padding: 12px; border-radius: 8px; z-index: 1000; border: 1px solid #5bc0be; transition: all 0.3s ease; }
         #planner-panel { top: 10px; right: 10px; width: 240px; }
         #planner-panel.minimized { width: 44px; height: 44px; padding: 0; overflow: hidden; border: 2px solid #5bc0be; }
@@ -17,16 +19,34 @@
         #planner-panel.minimized .hamburger-icon { display: block; }
         #planner-panel.minimized .panel-content { display: none; }
         .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5bc0be; margin-bottom: 10px; padding-bottom: 5px; font-weight: bold; }
+        
         #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 750px; display: none; justify-content: space-around; text-align: center; }
         .monitor-item { flex: 1; border-right: 1px solid #3a506b; }
         .monitor-item:last-child { border-right: none; }
         .val { font-size: 18px; font-weight: bold; color: #5bc0be; display: block; }
         .label { font-size: 9px; text-transform: uppercase; color: #a1a1aa; }
+        
         .btn { display: block; width: 100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; background: #3a506b; color: white; }
         .btn-start { background: #ff9f1c; color: #0b132b; }
         .btn-danger { background: #ff4d4d !important; color: white; }
+        
         .wp-popup { color: black; line-height: 1.3; min-width: 200px; font-size: 12px; }
         .wp-popup input { width: 100%; margin: 5px 0; padding: 4px; box-sizing: border-box; }
+        
+        /* Recenter Button */
+        #recenter-btn { 
+            position: absolute; bottom: 90px; right: 20px; width: 44px; height: 44px; 
+            background: rgba(20, 30, 48, 0.9); border: 2px solid #5bc0be; border-radius: 50%; 
+            z-index: 1000; display: none; cursor: pointer; justify-content: center; align-items: center; 
+        }
+        .crosshair {
+            width: 20px; height: 20px; border: 2px solid #5bc0be; border-radius: 50%; position: relative;
+        }
+        .crosshair::before, .crosshair::after {
+            content: ''; position: absolute; background: #5bc0be;
+        }
+        .crosshair::before { top: -4px; bottom: -4px; left: 8px; width: 2px; }
+        .crosshair::after { left: -4px; right: -4px; top: 8px; height: 2px; }
     </style>
 </head>
 <body>
@@ -34,7 +54,7 @@
     <div id="planner-panel" class="panel">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header"><span>Seafarer Nav v5.1</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
+            <div class="panel-header"><span>Seafarer Nav v5.2</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
@@ -45,7 +65,7 @@
             <select id="layerSelect" class="btn" onchange="changeLayer(this.value)">
                 <option value="onc">Kaart: OpenNautical</option>
                 <option value="arcgis">Kaart: ArcGIS Ocean</option>
-                <option value="sat">Kaart: Satelliet + Seamarks</option>
+                <option value="sat">Kaart: Satelliet</option>
             </select>
             <button class="btn btn-start" id="monitorBtn" onclick="toggleMonitoring()">📡 START MONITORING</button>
         </div>
@@ -59,29 +79,42 @@
         <div class="monitor-item"><span class="label">ETA (End)</span><span class="val" id="eta">--:--</span></div>
     </div>
 
+    <div id="recenter-btn" onclick="recenterMap()">
+        <div class="crosshair"></div>
+    </div>
+
     <div id="map"></div>
 
     <script>
+        // --- MAP INITIALISATIE ---
         var map = L.map('map', { zoomControl: false, center: [54.0, 4.0], zoom: 6 });
+        
+        // Zorg dat seamarks ALTIJD bovenop liggen
+        map.createPane('seamarksPane');
+        map.getPane('seamarksPane').style.zIndex = 650;
+        map.getPane('seamarksPane').style.pointerEvents = 'none'; // Laat kliks door naar de laag eronder (voor route planning)
+
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [], lastSog = 0;
         var shipPos = null, vectorLine = null, shipCircle = null, isMonitoring = false, watchId = null;
         var mapOffset = null; 
+        var isFreePanning = false;
 
         const baseLayers = {
             osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
-            seamarks: L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', { maxZoom: 18 }),
             sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'),
             arcgis: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 13 })
         };
+        const seamarkLayer = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', { maxZoom: 18, pane: 'seamarksPane' });
 
-        var currentBase = L.layerGroup([baseLayers.osm, baseLayers.seamarks]).addTo(map);
+        var currentBase = baseLayers.osm.addTo(map);
+        seamarkLayer.addTo(map);
 
         function changeLayer(type) {
             map.removeLayer(currentBase);
-            if (type === 'onc') currentBase = L.layerGroup([baseLayers.osm, baseLayers.seamarks]).addTo(map);
-            else if (type === 'arcgis') currentBase = L.layerGroup([baseLayers.arcgis, baseLayers.seamarks]).addTo(map);
-            else currentBase = L.layerGroup([baseLayers.sat, baseLayers.seamarks]).addTo(map);
+            if (type === 'onc') currentBase = baseLayers.osm.addTo(map);
+            else if (type === 'arcgis') currentBase = baseLayers.arcgis.addTo(map);
+            else currentBase = baseLayers.sat.addTo(map);
         }
 
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -98,9 +131,40 @@
 
         function toggleMenu() { document.getElementById('planner-panel').classList.toggle('minimized'); }
 
+        // --- PANNING & RECENTER LOGICA ---
+        map.on('dragstart', function() {
+            if (isMonitoring) {
+                isFreePanning = true;
+                document.getElementById('recenter-btn').style.display = 'flex';
+            }
+        });
+
+        function recenterMap() {
+            isFreePanning = false;
+            mapOffset = null; // Reset de offset zodat hij weer strak op de boot zit
+            document.getElementById('recenter-btn').style.display = 'none';
+            if (shipPos) map.panTo(shipPos, { animate: true });
+        }
+
+        // --- ROUTE CREATIE (LONG PRESS MAP) ---
+        let mapPressTimer;
+        map.on('mousedown touchstart', function(e) {
+            mapPressTimer = setTimeout(() => {
+                // Voeg WP toe aan het einde van de route
+                waypoints.push({lat: e.latlng.lat, lng: e.latlng.lng, note: ""});
+                updateRouteDisplay();
+            }, 1000);
+        });
+        map.on('mouseup touchend mousemove touchmove', function() {
+            clearTimeout(mapPressTimer);
+        });
+
+
         function toggleMonitoring() {
             if (!isMonitoring) {
                 isMonitoring = true;
+                isFreePanning = false;
+                document.getElementById('recenter-btn').style.display = 'none';
                 document.getElementById('monitorBtn').innerText = "🛑 STOP MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff4d4d";
                 document.getElementById('monitor-bar').style.display = "flex";
@@ -110,6 +174,7 @@
                 navigator.geolocation.clearWatch(watchId);
                 document.getElementById('monitorBtn').innerText = "📡 START MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff9f1c";
+                document.getElementById('recenter-btn').style.display = 'none';
             }
         }
 
@@ -140,6 +205,10 @@
             });
             if (!shipCircle) {
                 shipCircle = L.marker([lat, lon], { draggable: true, icon: ringIcon, zIndexOffset: 1000 }).addTo(map);
+                shipCircle.on('dragstart', () => { 
+                    isFreePanning = true; 
+                    document.getElementById('recenter-btn').style.display = 'flex';
+                });
                 shipCircle.on('dragend', function(e) {
                     const markerPx = map.latLngToLayerPoint(e.target.getLatLng());
                     const centerPx = map.latLngToLayerPoint(map.getCenter());
@@ -158,16 +227,17 @@
                 shipCircle.bindPopup(`<div class="vector-popup"><b>Positie:</b><br>${latD}°${latM}'${lat>=0?'N':'S'}<br>${lonD}°${lonM}'${lon>=0?'E':'W'}<hr>Vector (min): <input type="number" value="${vectorMinutes}" onchange="vectorMinutes=this.value"></div>`, { autoPan: false });
             }
 
-            if (mapOffset) {
-                const targetPx = map.latLngToLayerPoint([lat, lon]);
-                const newCenterLatLng = map.layerPointToLatLng(L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y));
-                map.setView(newCenterLatLng, map.getZoom(), { animate: false });
-            } else map.panTo([lat, lon], { animate: false });
+            if (!isFreePanning) {
+                if (mapOffset) {
+                    const targetPx = map.latLngToLayerPoint([lat, lon]);
+                    const newCenterLatLng = map.layerPointToLatLng(L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y));
+                    map.setView(newCenterLatLng, map.getZoom(), { animate: false });
+                } else map.panTo([lat, lon], { animate: false });
+            }
         }
 
         function checkBisectorAuto(lat, lon) {
             if (activeWpIndex >= waypoints.length - 1) return;
-            
             const pPrev = (activeWpIndex === 0 && shipPos) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
             const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
             const pNext = [waypoints[activeWpIndex+1].lat, waypoints[activeWpIndex+1].lng];
@@ -179,8 +249,7 @@
             let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
             
             const distToWp = map.distance([lat, lon], pCurr) / 1852;
-
-            if (diff > 90 && distToWp < 1.0) { // Toegevoegd: afstandsmarge zodat hij niet aan het begin van de route al verspringt
+            if (diff > 90 && distToWp < 1.0) {
                 activeWpIndex++;
                 playArrivalBeep();
                 updateRouteDisplay();
@@ -223,11 +292,7 @@
 
                 const m = L.marker([wp.lat, wp.lng], {
                     draggable: true,
-                    icon: L.divIcon({
-                        className: 'wp-icon',
-                        html: `<div style="width:12px; height:12px; background:${color}; border:2px solid white; border-radius:50%;"></div>`,
-                        iconSize: [16, 16], iconAnchor: [8, 8]
-                    })
+                    icon: L.divIcon({ className: 'wp-icon', html: `<div style="width:12px; height:12px; background:${color}; border:2px solid white; border-radius:50%;"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] })
                 }).addTo(map);
 
                 m.on('drag', function(e) {
@@ -252,7 +317,18 @@
                 if (i < waypoints.length - 1) {
                     const legColor = (i === activeWpIndex - 1) ? '#ff9f1c' : (i < activeWpIndex - 1 ? '#555' : 'red');
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: legColor, weight: 4}).addTo(map);
-                    l.on('contextmenu', (e) => insertWaypoint(i + 1, e.latlng));
+                    
+                    // --- LIJN INSERTIE (LONG PRESS) ---
+                    let linePressTimer;
+                    l.on('mousedown touchstart', function(e) {
+                        clearTimeout(mapPressTimer); // Voorkom dat de map-press afgaat
+                        L.DomEvent.stopPropagation(e); // Voorkom bubbling
+                        linePressTimer = setTimeout(() => {
+                            insertWaypoint(i + 1, e.latlng);
+                        }, 1000);
+                    });
+                    l.on('mouseup touchend mousemove touchmove', function() { clearTimeout(linePressTimer); });
+                    
                     routeLines.push(l);
                 }
             });
