@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Seafarer Nav v5.2</title>
+    <title>Seafarer Nav v5.3</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -30,14 +30,14 @@
         .dash-col { display: flex; flex-direction: column; justify-content: center; }
         .dash-left { flex: 1; align-items: flex-start; }
         .dash-center { flex: 1; align-items: center; }
-        .dash-right { flex: 1; align-items: flex-end; text-align: right; }
+        .dash-right { flex: 1; align-items: flex-start; text-align: left; padding-left: 15px; border-left: 1px solid #3a506b; }
         
         .dash-title { font-size: 11px; color: #a1a1aa; text-transform: uppercase; margin-bottom: 2px; }
         .dash-val { font-size: 20px; font-weight: bold; color: #fff; }
         .dash-snelheid { font-size: 34px; font-weight: bold; color: #fff; line-height: 1; margin: 2px 0; }
         .dash-unit { font-size: 11px; color: #a1a1aa; }
-        .dash-gps { font-size: 13px; font-family: monospace; color: #fff; margin-bottom: 4px; letter-spacing: 0.5px; }
-        .dash-nav { font-size: 12px; color: #5bc0be; font-weight: bold; }
+        .dash-gps { font-size: 13px; font-family: monospace; color: #fff; margin-bottom: 4px; letter-spacing: 0.5px; line-height: 1.2; }
+        .dash-nav { font-size: 12px; color: #5bc0be; font-weight: bold; line-height: 1.3; }
         
         .btn { display: block; width: 100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; background: #3a506b; color: white; }
         .btn-start { background: #ff9f1c; color: #0b132b; }
@@ -58,8 +58,8 @@
         .crosshair::before, .crosshair::after {
             content: ''; position: absolute; background: #5bc0be;
         }
-        .crosshair::before { top: -4px; bottom: -4px; left: 8px; width: 2px; }
-        .crosshair::after { left: -4px; right: -4px; top: 8px; height: 2px; }
+        .crosshair::before { top: -2px; bottom: -2px; left: 50%; width: 2px; margin-left: -1px; }
+        .crosshair::after { left: -2px; right: -2px; top: 50%; height: 2px; margin-top: -1px; }
     </style>
 </head>
 <body>
@@ -67,12 +67,21 @@
     <div id="planner-panel" class="panel minimized">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
-            <div class="panel-header"><span>Seafarer Nav v5.2</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
+            <div class="panel-header"><span>Seafarer Nav v5.3</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
             <div style="display:flex; gap:5px;">
                 <button class="btn" onclick="saveRouteRTZ()">💾 Opslaan</button>
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
                 <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip" style="display:none;" onchange="loadRouteRTZ(event)">
             </div>
+            
+            <hr style="border-color:#3a506b; margin-top: 10px;">
+            <div style="font-size: 10px; margin-bottom: 2px; color:#a1a1aa;">Opslaglocatie Routes:</div>
+            <select id="saveLocationPref" class="btn" style="background:#1c2541; margin-top:0;" onchange="localStorage.setItem('savePref', this.value)">
+                <option value="prompt">Vraag per keer (Locatie kiezen)</option>
+                <option value="downloads">Standaard Downloads map</option>
+            </select>
+            <hr style="border-color:#3a506b; margin-bottom: 10px;">
+
             <button class="btn" id="newRouteBtn" onclick="toggleRouteCreation()">📍 Nieuwe route: UIT</button>
             <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
@@ -96,7 +105,7 @@
             <div class="dash-unit">knopen</div>
         </div>
         <div class="dash-col dash-right">
-            <div class="dash-gps" id="gps-val">--.---- --.----</div>
+            <div class="dash-gps" id="gps-val">--°--.--' N<br>--°--.--' E</div>
             <div class="dash-nav">
                 DTG: <span id="dtg-val">--.-</span> nm<br>TTG: <span id="ttg-val">--:--</span>
             </div>
@@ -110,10 +119,15 @@
     <div id="map"></div>
 
     <script>
+        // --- INLADEN VAN SETTINGS EN LOKALE ROUTE ---
+        document.addEventListener("DOMContentLoaded", () => {
+            const savedPref = localStorage.getItem('savePref');
+            if (savedPref) document.getElementById('saveLocationPref').value = savedPref;
+            loadRouteFromLocal();
+        });
+
         // --- MAP INITIALISATIE ---
         var map = L.map('map', { zoomControl: false, center: [54.0, 4.0], zoom: 6 });
-        
-        // Zorg dat seamarks ALTIJD bovenop liggen
         map.createPane('seamarksPane');
         map.getPane('seamarksPane').style.zIndex = 650;
         map.getPane('seamarksPane').style.pointerEvents = 'none';
@@ -181,12 +195,11 @@
 
         function recenterMap() {
             isFreePanning = false;
-            mapOffset = null; 
+            mapOffset = null; // Centreer de kaart weer precies op het schip
             document.getElementById('recenter-btn').style.display = 'none';
             if (shipPos) map.panTo(shipPos, { animate: true });
         }
 
-        // --- ROUTE CREATIE (LONG PRESS MAP) ---
         let mapPressTimer;
         map.on('mousedown touchstart', function(e) {
             if (!isCreatingRoute) return;
@@ -202,7 +215,7 @@
         function formatGpsShort(lat, lon) {
             const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(2);
             const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(2);
-            return `${lat>=0?'N':'S'}${latD}°${latM}' ${lon>=0?'E':'W'}${lonD}°${lonM}'`;
+            return `${latD}°${latM}' ${lat>=0?'N':'S'}<br>${lonD}°${lonM}' ${lon>=0?'E':'W'}`;
         }
 
         function toggleMonitoring() {
@@ -262,7 +275,7 @@
             
             document.getElementById('sog-val').innerText = lastSog.toFixed(1);
             document.getElementById('cog-val').innerText = Math.round(cog).toString().padStart(3, '0');
-            document.getElementById('gps-val').innerText = formatGpsShort(lat, lon);
+            document.getElementById('gps-val').innerHTML = formatGpsShort(lat, lon);
             
             updateShipGraphics(lat, lon, cog, lastSog);
             
@@ -271,7 +284,7 @@
                     autoSetWaypoint(lat, lon);
                     hasAutoSetWp = true;
                 }
-                checkBisectorAuto(lat, lon);
+                checkBisectorAuto(lat, lon, cog, lastSog);
                 calculateNavData(lat, lon, lastSog);
             }
         }
@@ -284,16 +297,25 @@
             });
             if (!shipCircle) {
                 shipCircle = L.marker([lat, lon], { draggable: true, icon: ringIcon, zIndexOffset: 1000 }).addTo(map);
+                
                 shipCircle.on('dragstart', () => { 
                     isFreePanning = true; 
                     document.getElementById('recenter-btn').style.display = 'flex';
                 });
+                
+                // Hiermee sleep je de marker om de OFF-CENTER positie te bepalen
                 shipCircle.on('dragend', function(e) {
-                    const markerPx = map.latLngToLayerPoint(e.target.getLatLng());
-                    const centerPx = map.latLngToLayerPoint(map.getCenter());
+                    const markerPx = map.latLngToContainerPoint(e.target.getLatLng());
+                    const centerPx = map.latLngToContainerPoint(map.getCenter());
                     mapOffset = { x: markerPx.x - centerPx.x, y: markerPx.y - centerPx.y };
+                    
+                    isFreePanning = false; // Hervat meebewegen met de nieuwe offset
+                    document.getElementById('recenter-btn').style.display = 'none';
+                    if (shipPos) updateShipGraphics(shipPos[0], shipPos[1], cog, sog); // Snap naar offset
                 });
-            } else shipCircle.setLatLng([lat, lon]);
+            } else {
+                shipCircle.setLatLng([lat, lon]);
+            }
 
             const dist = (sog * (vectorMinutes / 60));
             const dest = calculateDestination(lat, lon, cog, dist);
@@ -308,14 +330,18 @@
 
             if (!isFreePanning) {
                 if (mapOffset) {
-                    const targetPx = map.latLngToLayerPoint([lat, lon]);
-                    const newCenterLatLng = map.layerPointToLatLng(L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y));
+                    const targetPx = map.latLngToContainerPoint([lat, lon]);
+                    const newCenterPx = L.point(targetPx.x - mapOffset.x, targetPx.y - mapOffset.y);
+                    const newCenterLatLng = map.containerPointToLatLng(newCenterPx);
                     map.setView(newCenterLatLng, map.getZoom(), { animate: false });
-                } else map.panTo([lat, lon], { animate: false });
+                } else {
+                    map.panTo([lat, lon], { animate: false });
+                }
             }
         }
 
-        function checkBisectorAuto(lat, lon) {
+        // --- BISECTRICE VECTOR DOORKRUISING ---
+        function checkBisectorAuto(lat, lon, cog, sog) {
             if (activeWpIndex >= waypoints.length - 1) return;
             const pPrev = (activeWpIndex === 0 && shipPos) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
             const pCurr = [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng];
@@ -323,15 +349,29 @@
 
             const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
             const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
-            let bisect = (b1 + b2) / 2 + 90;
-            const bearingToShip = getBearing(pCurr[0], pCurr[1], lat, lon);
-            let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
             
+            const dist = (sog * (vectorMinutes / 60));
+            const dest = calculateDestination(lat, lon, cog, dist); // Vector Tip
+
+            // Functie die berekent of een punt aan de 'volgende' kant van de bisectrice ligt
+            const isPast = (p) => {
+                let bisect = (b1 + b2) / 2 + 90;
+                const bearNext = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
+                const bearP = getBearing(pCurr[0], pCurr[1], p[0], p[1]);
+                const normNext = Math.sin((bearNext - bisect) * Math.PI / 180);
+                const normP = Math.sin((bearP - bisect) * Math.PI / 180);
+                return (normNext * normP) > 0; // True als ze aan dezelfde kant van de lijn liggen
+            };
+
             const distToWp = map.distance([lat, lon], pCurr) / 1852;
-            if (diff > 90 && distToWp < 1.0) {
-                activeWpIndex++;
-                playArrivalBeep();
-                updateRouteDisplay();
+            const thresholdDist = Math.max(1.0, dist + 0.5); 
+            
+            if (distToWp < thresholdDist) {
+                if (isPast(dest) || isPast([lat, lon])) {
+                    activeWpIndex++;
+                    playArrivalBeep();
+                    updateRouteDisplay();
+                }
             }
         }
 
@@ -342,7 +382,6 @@
                 return;
             }
             
-            // Afstand alleen naar het actieve waypoint
             let dtg = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]) / 1852;
             document.getElementById('dtg-val').innerText = dtg.toFixed(1);
 
@@ -359,6 +398,22 @@
             const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(3);
             const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(3);
             return `${latD}° ${latM}' ${lat >= 0 ? 'N' : 'S'} <br> ${lonD}° ${lonM}' ${lon >= 0 ? 'E' : 'W'}`;
+        }
+
+        function saveRouteToLocal() {
+            localStorage.setItem('savedRoute', JSON.stringify({ waypoints, activeWpIndex }));
+        }
+
+        function loadRouteFromLocal() {
+            try {
+                const saved = localStorage.getItem('savedRoute');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    waypoints = parsed.waypoints || [];
+                    activeWpIndex = parsed.activeWpIndex || 0;
+                    if(waypoints.length > 0) updateRouteDisplay();
+                }
+            } catch(e) {}
         }
 
         function updateRouteDisplay() {
@@ -402,7 +457,6 @@
                 `);
                 wpMarkers.push(m);
 
-                // Oranje Bisectrice lijn tekenen (ong 0.2 NM aan elke kant, wat rond 1 cm op scherm lijkt)
                 if (i > 0 && i < waypoints.length - 1) {
                     const pPrev = [waypoints[i-1].lat, waypoints[i-1].lng];
                     const pCurr = [wp.lat, wp.lng];
@@ -436,6 +490,7 @@
                     routeLines.push(l);
                 }
             });
+            saveRouteToLocal();
         }
 
         function drawRouteOnly() {
@@ -505,13 +560,34 @@
 
         window.nextActiveWP = function() { activeWpIndex = (activeWpIndex + 1) % waypoints.length; updateRouteDisplay(); };
         window.clearRoute = function() { waypoints = []; activeWpIndex = 0; updateRouteDisplay(); };
-        window.saveRouteRTZ = function() {
+        
+        window.saveRouteRTZ = async function() {
             if(waypoints.length === 0) return;
-            let n = prompt("Naam:", "Route"); if(!n) return;
             let xml = `<?xml version="1.0" encoding="UTF-8"?><route xmlns="http://www.cirm.org/RTZ/1/0"><waypoints>`; 
             waypoints.forEach((wp, i) => { xml += `<waypoint id="${i+1}"><position lat="${wp.lat}" lon="${wp.lng}"/></waypoint>`; }); 
             xml += `</waypoints></route>`; 
-            let a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([xml], {type: "application/xml"})); a.download = n + ".rtz"; a.click(); 
+            
+            const pref = document.getElementById('saveLocationPref').value;
+            
+            if (pref === 'prompt' && window.showSaveFilePicker) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: 'Route.rtz',
+                        types: [{ description: 'RTZ Route', accept: {'application/xml': ['.rtz']} }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(xml);
+                    await writable.close();
+                } catch (e) {
+                    console.log('Opslaan geannuleerd', e);
+                }
+            } else {
+                let n = prompt("Naam:", "Route"); if(!n) return;
+                let a = document.createElement('a'); 
+                a.href = URL.createObjectURL(new Blob([xml], {type: "application/xml"})); 
+                a.download = n + ".rtz"; 
+                a.click(); 
+            }
         };
     </script>
 </body>
