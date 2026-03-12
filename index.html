@@ -20,11 +20,24 @@
         #planner-panel.minimized .panel-content { display: none; }
         .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #5bc0be; margin-bottom: 10px; padding-bottom: 5px; font-weight: bold; }
         
-        #monitor-bar { bottom: 20px; left: 50%; transform: translateX(-50%); width: 95%; max-width: 750px; display: none; justify-content: space-around; text-align: center; }
-        .monitor-item { flex: 1; border-right: 1px solid #3a506b; }
-        .monitor-item:last-child { border-right: none; }
-        .val { font-size: 18px; font-weight: bold; color: #5bc0be; display: block; }
-        .label { font-size: 9px; text-transform: uppercase; color: #a1a1aa; }
+        /* Nieuw Dashboard */
+        #new-dashboard {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 85px;
+            background: #2f3e50; display: none; justify-content: space-between; align-items: center;
+            color: white; z-index: 1000; box-sizing: border-box; padding: 5px 20px;
+            border-top: 2px solid #5bc0be;
+        }
+        .dash-col { display: flex; flex-direction: column; justify-content: center; }
+        .dash-left { flex: 1; align-items: flex-start; }
+        .dash-center { flex: 1; align-items: center; }
+        .dash-right { flex: 1; align-items: flex-end; text-align: right; }
+        
+        .dash-title { font-size: 11px; color: #a1a1aa; text-transform: uppercase; margin-bottom: 2px; }
+        .dash-val { font-size: 20px; font-weight: bold; color: #fff; }
+        .dash-snelheid { font-size: 34px; font-weight: bold; color: #fff; line-height: 1; margin: 2px 0; }
+        .dash-unit { font-size: 11px; color: #a1a1aa; }
+        .dash-gps { font-size: 13px; font-family: monospace; color: #fff; margin-bottom: 4px; letter-spacing: 0.5px; }
+        .dash-nav { font-size: 12px; color: #5bc0be; font-weight: bold; }
         
         .btn { display: block; width: 100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; font-size: 11px; background: #3a506b; color: white; }
         .btn-start { background: #ff9f1c; color: #0b132b; }
@@ -35,7 +48,7 @@
         
         /* Recenter Button */
         #recenter-btn { 
-            position: absolute; bottom: 90px; right: 20px; width: 44px; height: 44px; 
+            position: absolute; bottom: 105px; right: 20px; width: 44px; height: 44px; 
             background: rgba(20, 30, 48, 0.9); border: 2px solid #5bc0be; border-radius: 50%; 
             z-index: 1000; display: none; cursor: pointer; justify-content: center; align-items: center; 
         }
@@ -51,7 +64,7 @@
 </head>
 <body>
 
-    <div id="planner-panel" class="panel">
+    <div id="planner-panel" class="panel minimized">
         <div class="hamburger-icon" onclick="toggleMenu()">☰</div>
         <div class="panel-content">
             <div class="panel-header"><span>Seafarer Nav v5.2</span><span onclick="toggleMenu()" style="cursor:pointer; padding: 5px;">×</span></div>
@@ -60,6 +73,7 @@
                 <button class="btn" onclick="document.getElementById('rtz-upload').click()">📂 Laden</button>
                 <input type="file" id="rtz-upload" accept=".rtz, .voy, .zip" style="display:none;" onchange="loadRouteRTZ(event)">
             </div>
+            <button class="btn" id="newRouteBtn" onclick="toggleRouteCreation()">📍 Nieuwe route: UIT</button>
             <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
             <select id="layerSelect" class="btn" onchange="changeLayer(this.value)">
@@ -71,12 +85,22 @@
         </div>
     </div>
 
-    <div id="monitor-bar" class="panel">
-        <div class="monitor-item"><span class="label">SOG (avg)</span><span class="val" id="sog">0.0 kn</span></div>
-        <div class="monitor-item"><span class="label">COG</span><span class="val" id="cog">000°</span></div>
-        <div class="monitor-item"><span class="label">Naar WP</span><span class="val" id="wp-info">--</span></div>
-        <div class="monitor-item"><span class="label">TTG</span><span class="val" id="ttg">00:00</span></div>
-        <div class="monitor-item"><span class="label">ETA (End)</span><span class="val" id="eta">--:--</span></div>
+    <div id="new-dashboard">
+        <div class="dash-col dash-left">
+            <div class="dash-title">Kompas</div>
+            <div class="dash-val"><span id="cog-val">000</span>°</div>
+        </div>
+        <div class="dash-col dash-center">
+            <div class="dash-title">Snelheid</div>
+            <div class="dash-snelheid"><span id="sog-val">0.0</span></div>
+            <div class="dash-unit">knopen</div>
+        </div>
+        <div class="dash-col dash-right">
+            <div class="dash-gps" id="gps-val">--.---- --.----</div>
+            <div class="dash-nav">
+                DTG: <span id="dtg-val">--.-</span> nm<br>TTG: <span id="ttg-val">--:--</span>
+            </div>
+        </div>
     </div>
 
     <div id="recenter-btn" onclick="recenterMap()">
@@ -92,13 +116,15 @@
         // Zorg dat seamarks ALTIJD bovenop liggen
         map.createPane('seamarksPane');
         map.getPane('seamarksPane').style.zIndex = 650;
-        map.getPane('seamarksPane').style.pointerEvents = 'none'; // Laat kliks door naar de laag eronder (voor route planning)
+        map.getPane('seamarksPane').style.pointerEvents = 'none';
 
         var waypoints = [], routeLines = [], wpMarkers = [];
         var activeWpIndex = 0, vectorMinutes = 6, speedHistory = [], lastSog = 0;
         var shipPos = null, vectorLine = null, shipCircle = null, isMonitoring = false, watchId = null;
         var mapOffset = null; 
         var isFreePanning = false;
+        var isCreatingRoute = false;
+        var hasAutoSetWp = false;
 
         const baseLayers = {
             osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
@@ -131,6 +157,20 @@
 
         function toggleMenu() { document.getElementById('planner-panel').classList.toggle('minimized'); }
 
+        function toggleRouteCreation() {
+            isCreatingRoute = !isCreatingRoute;
+            const btn = document.getElementById('newRouteBtn');
+            if (isCreatingRoute) {
+                btn.innerText = "📍 Nieuwe route: AAN";
+                btn.style.background = "#ff9f1c";
+                btn.style.color = "#0b132b";
+            } else {
+                btn.innerText = "📍 Nieuwe route: UIT";
+                btn.style.background = "#3a506b";
+                btn.style.color = "white";
+            }
+        }
+
         // --- PANNING & RECENTER LOGICA ---
         map.on('dragstart', function() {
             if (isMonitoring) {
@@ -141,7 +181,7 @@
 
         function recenterMap() {
             isFreePanning = false;
-            mapOffset = null; // Reset de offset zodat hij weer strak op de boot zit
+            mapOffset = null; 
             document.getElementById('recenter-btn').style.display = 'none';
             if (shipPos) map.panTo(shipPos, { animate: true });
         }
@@ -149,8 +189,8 @@
         // --- ROUTE CREATIE (LONG PRESS MAP) ---
         let mapPressTimer;
         map.on('mousedown touchstart', function(e) {
+            if (!isCreatingRoute) return;
             mapPressTimer = setTimeout(() => {
-                // Voeg WP toe aan het einde van de route
                 waypoints.push({lat: e.latlng.lat, lng: e.latlng.lng, note: ""});
                 updateRouteDisplay();
             }, 1000);
@@ -159,15 +199,24 @@
             clearTimeout(mapPressTimer);
         });
 
+        function formatGpsShort(lat, lon) {
+            const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(2);
+            const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(2);
+            return `${lat>=0?'N':'S'}${latD}°${latM}' ${lon>=0?'E':'W'}${lonD}°${lonM}'`;
+        }
 
         function toggleMonitoring() {
             if (!isMonitoring) {
                 isMonitoring = true;
                 isFreePanning = false;
+                hasAutoSetWp = false;
                 document.getElementById('recenter-btn').style.display = 'none';
                 document.getElementById('monitorBtn').innerText = "🛑 STOP MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff4d4d";
-                document.getElementById('monitor-bar').style.display = "flex";
+                document.getElementById('new-dashboard').style.display = "flex";
+                
+                if(isCreatingRoute) toggleRouteCreation(); 
+                
                 watchId = navigator.geolocation.watchPosition(updatePosition, null, {enableHighAccuracy: true});
             } else {
                 isMonitoring = false;
@@ -175,7 +224,31 @@
                 document.getElementById('monitorBtn').innerText = "📡 START MONITORING";
                 document.getElementById('monitorBtn').style.background = "#ff9f1c";
                 document.getElementById('recenter-btn').style.display = 'none';
+                document.getElementById('new-dashboard').style.display = "none";
             }
+        }
+
+        function autoSetWaypoint(lat, lon) {
+            if (waypoints.length < 2) return;
+            for (let i = 0; i < waypoints.length - 1; i++) {
+                const pPrev = (i === 0) ? [lat, lon] : [waypoints[i-1].lat, waypoints[i-1].lng];
+                const pCurr = [waypoints[i].lat, waypoints[i].lng];
+                const pNext = [waypoints[i+1].lat, waypoints[i+1].lng];
+
+                const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
+                const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
+                let bisect = (b1 + b2) / 2 + 90;
+                
+                const bearingToShip = getBearing(pCurr[0], pCurr[1], lat, lon);
+                let diff = Math.abs(((bearingToShip - bisect + 180 + 360) % 360) - 180);
+
+                if (diff <= 90) { 
+                    activeWpIndex = i;
+                    break;
+                }
+                activeWpIndex = i + 1;
+            }
+            updateRouteDisplay();
         }
 
         function updatePosition(pos) {
@@ -186,12 +259,18 @@
             speedHistory.push(rawSog);
             if (speedHistory.length > 10) speedHistory.shift();
             lastSog = speedHistory.reduce((a, b) => a + b, 0) / speedHistory.length;
-            document.getElementById('sog').innerText = lastSog.toFixed(1) + " kn";
-            document.getElementById('cog').innerText = Math.round(cog).toString().padStart(3, '0') + "°";
+            
+            document.getElementById('sog-val').innerText = lastSog.toFixed(1);
+            document.getElementById('cog-val').innerText = Math.round(cog).toString().padStart(3, '0');
+            document.getElementById('gps-val').innerText = formatGpsShort(lat, lon);
             
             updateShipGraphics(lat, lon, cog, lastSog);
             
             if (waypoints.length > 0) {
+                if (!hasAutoSetWp) {
+                    autoSetWaypoint(lat, lon);
+                    hasAutoSetWp = true;
+                }
                 checkBisectorAuto(lat, lon);
                 calculateNavData(lat, lon, lastSog);
             }
@@ -257,15 +336,23 @@
         }
 
         function calculateNavData(lat, lon, sog) {
-            if (waypoints.length === 0 || activeWpIndex >= waypoints.length || sog < 0.2) return;
-            let d = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
-            for (let i = activeWpIndex; i < waypoints.length - 1; i++) d += map.distance([waypoints[i].lat, waypoints[i].lng], [waypoints[i+1].lat, waypoints[i+1].lng]);
-            const hoursTotal = (d / 1852) / sog;
-            const h = Math.floor(hoursTotal), m = Math.floor((hoursTotal - h) * 60);
-            document.getElementById('ttg').innerText = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
-            const eta = new Date(Date.now() + hoursTotal * 3600000);
-            document.getElementById('eta').innerText = eta.getHours().toString().padStart(2, '0') + ":" + eta.getMinutes().toString().padStart(2, '0');
-            document.getElementById('wp-info').innerText = `WP ${activeWpIndex + 1}`;
+            if (waypoints.length === 0 || activeWpIndex >= waypoints.length) {
+                document.getElementById('dtg-val').innerText = "--.-";
+                document.getElementById('ttg-val').innerText = "--:--";
+                return;
+            }
+            
+            // Afstand alleen naar het actieve waypoint
+            let dtg = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]) / 1852;
+            document.getElementById('dtg-val').innerText = dtg.toFixed(1);
+
+            if (sog > 0.2) {
+                const hoursTotal = dtg / sog;
+                const h = Math.floor(hoursTotal), m = Math.floor((hoursTotal - h) * 60);
+                document.getElementById('ttg-val').innerText = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+            } else {
+                document.getElementById('ttg-val').innerText = "--:--";
+            }
         }
 
         function formatCoords(lat, lon) {
@@ -277,6 +364,7 @@
         function updateRouteDisplay() {
             routeLines.forEach(l => map.removeLayer(l)); wpMarkers.forEach(m => map.removeLayer(m));
             routeLines = []; wpMarkers = [];
+            
             waypoints.forEach((wp, i) => {
                 const isTarget = (i === activeWpIndex);
                 const color = (i < activeWpIndex) ? '#555' : (isTarget ? '#ff9f1c' : 'red');
@@ -314,15 +402,31 @@
                 `);
                 wpMarkers.push(m);
 
+                // Oranje Bisectrice lijn tekenen (ong 0.2 NM aan elke kant, wat rond 1 cm op scherm lijkt)
+                if (i > 0 && i < waypoints.length - 1) {
+                    const pPrev = [waypoints[i-1].lat, waypoints[i-1].lng];
+                    const pCurr = [wp.lat, wp.lng];
+                    const pNext = [waypoints[i+1].lat, waypoints[i+1].lng];
+                    
+                    const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
+                    const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
+                    let bisect = (b1 + b2) / 2 + 90;
+
+                    const p1 = calculateDestination(wp.lat, wp.lng, bisect, 0.2); 
+                    const p2 = calculateDestination(wp.lat, wp.lng, bisect + 180, 0.2);
+                    
+                    const bisectLine = L.polyline([p1, p2], {color: '#ff9f1c', weight: 2}).addTo(map);
+                    routeLines.push(bisectLine);
+                }
+
                 if (i < waypoints.length - 1) {
                     const legColor = (i === activeWpIndex - 1) ? '#ff9f1c' : (i < activeWpIndex - 1 ? '#555' : 'red');
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: legColor, weight: 4}).addTo(map);
                     
-                    // --- LIJN INSERTIE (LONG PRESS) ---
                     let linePressTimer;
                     l.on('mousedown touchstart', function(e) {
-                        clearTimeout(mapPressTimer); // Voorkom dat de map-press afgaat
-                        L.DomEvent.stopPropagation(e); // Voorkom bubbling
+                        clearTimeout(mapPressTimer); 
+                        L.DomEvent.stopPropagation(e); 
                         linePressTimer = setTimeout(() => {
                             insertWaypoint(i + 1, e.latlng);
                         }, 1000);
@@ -338,6 +442,19 @@
             routeLines.forEach(l => map.removeLayer(l));
             routeLines = [];
             waypoints.forEach((wp, i) => {
+                if (i > 0 && i < waypoints.length - 1) {
+                    const pPrev = [waypoints[i-1].lat, waypoints[i-1].lng];
+                    const pCurr = [wp.lat, wp.lng];
+                    const pNext = [waypoints[i+1].lat, waypoints[i+1].lng];
+                    const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
+                    const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
+                    let bisect = (b1 + b2) / 2 + 90;
+                    const p1 = calculateDestination(wp.lat, wp.lng, bisect, 0.2); 
+                    const p2 = calculateDestination(wp.lat, wp.lng, bisect + 180, 0.2);
+                    const bisectLine = L.polyline([p1, p2], {color: '#ff9f1c', weight: 2}).addTo(map);
+                    routeLines.push(bisectLine);
+                }
+
                 if (i < waypoints.length - 1) {
                     const legColor = (i === activeWpIndex - 1) ? '#ff9f1c' : (i < activeWpIndex - 1 ? '#555' : 'red');
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: legColor, weight: 4}).addTo(map);
