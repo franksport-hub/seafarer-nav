@@ -1,4 +1,4 @@
-    <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
@@ -82,6 +82,9 @@
             </select>
             <hr style="border-color:#3a506b; margin-bottom: 10px;">
 
+            <button class="btn" onclick="undoLastAction()">↩️ Ongedaan maken</button>
+            <button class="btn" id="unitToggleBtn" onclick="toggleUnits()" style="background:#2f3e50;">⚓ Eenheden: Nautisch</button>
+
             <button class="btn" id="newRouteBtn" onclick="toggleRouteCreation()">📍 Nieuwe route: UIT</button>
             <button class="btn" style="background:#4caf50;" onclick="nextActiveWP()">⏭️ Volgend WP</button>
             <button class="btn" style="background:#555;" onclick="clearRoute()">🗑️ Wis Route</button>
@@ -102,12 +105,12 @@
         <div class="dash-col dash-center">
             <div class="dash-title">Snelheid</div>
             <div class="dash-snelheid"><span id="sog-val">0.0</span></div>
-            <div class="dash-unit">knopen</div>
+            <div class="dash-unit" id="unit-speed-label">knopen</div>
         </div>
         <div class="dash-col dash-right">
             <div class="dash-gps" id="gps-val">--°--.--' N<br>--°--.--' E</div>
             <div class="dash-nav">
-                DTG: <span id="dtg-val">--.-</span> nm<br>TTG: <span id="ttg-val">--:--</span>
+                DTG: <span id="dtg-val">--.-</span> <span id="unit-dist-label">nm</span><br>TTG: <span id="ttg-val">--:--</span>
             </div>
         </div>
     </div>
@@ -139,6 +142,9 @@
         var isFreePanning = false;
         var isCreatingRoute = false;
         var hasAutoSetWp = false;
+        
+        var wpHistory = [];
+        var isMetric = false;
 
         const baseLayers = {
             osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
@@ -185,6 +191,33 @@
             }
         }
 
+        // --- HISTORIE & EENHEDEN LOGICA ---
+        function saveHistoryState() {
+            wpHistory.push(JSON.parse(JSON.stringify(waypoints)));
+            if (wpHistory.length > 15) wpHistory.shift(); 
+        }
+
+        function undoLastAction() {
+            if (wpHistory.length > 0) {
+                waypoints = wpHistory.pop();
+                if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1);
+                updateRouteDisplay();
+            }
+        }
+
+        function toggleUnits() {
+            isMetric = !isMetric;
+            document.getElementById('unitToggleBtn').innerText = isMetric ? "📏 Eenheden: Metrisch" : "⚓ Eenheden: Nautisch";
+            document.getElementById('unit-speed-label').innerText = isMetric ? "km/h" : "knopen";
+            document.getElementById('unit-dist-label').innerText = isMetric ? "km" : "nm";
+            updateRouteDisplay(); 
+        }
+
+        function getDistance(latlng1, latlng2) {
+            var meters = map.distance(latlng1, latlng2);
+            return isMetric ? (meters / 1000) : (meters / 1852);
+        }
+
         // --- PANNING & RECENTER LOGICA ---
         map.on('dragstart', function() {
             if (isMonitoring) {
@@ -195,17 +228,19 @@
 
         function recenterMap() {
             isFreePanning = false;
-            mapOffset = null; // Centreer de kaart weer precies op het schip
+            mapOffset = null; 
             document.getElementById('recenter-btn').style.display = 'none';
             if (shipPos) map.panTo(shipPos, { animate: true });
         }
 
+        // Nieuwe Waypoints via Click
         map.on('click', function(e) {
             if (!isCreatingRoute) return;
+            saveHistoryState();
             waypoints.push({lat: e.latlng.lat, lng: e.latlng.lng, note: ""});
             updateRouteDisplay();
         });
-        
+
         function formatGpsShort(lat, lon) {
             const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(2);
             const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(2);
@@ -260,7 +295,8 @@
 
         function updatePosition(pos) {
             const lat = pos.coords.latitude, lon = pos.coords.longitude;
-            const rawSog = (pos.coords.speed * 1.94384) || 0;
+            const speedFactor = isMetric ? 3.6 : 1.94384;
+            const rawSog = (pos.coords.speed * speedFactor) || 0;
             const cog = pos.coords.heading || 0;
             shipPos = [lat, lon];
             speedHistory.push(rawSog);
@@ -297,21 +333,22 @@
                     document.getElementById('recenter-btn').style.display = 'flex';
                 });
                 
-                // Hiermee sleep je de marker om de OFF-CENTER positie te bepalen
                 shipCircle.on('dragend', function(e) {
                     const markerPx = map.latLngToContainerPoint(e.target.getLatLng());
                     const centerPx = map.latLngToContainerPoint(map.getCenter());
                     mapOffset = { x: markerPx.x - centerPx.x, y: markerPx.y - centerPx.y };
                     
-                    isFreePanning = false; // Hervat meebewegen met de nieuwe offset
+                    isFreePanning = false; 
                     document.getElementById('recenter-btn').style.display = 'none';
-                    if (shipPos) updateShipGraphics(shipPos[0], shipPos[1], cog, sog); // Snap naar offset
+                    if (shipPos) updateShipGraphics(shipPos[0], shipPos[1], cog, sog); 
                 });
             } else {
                 shipCircle.setLatLng([lat, lon]);
             }
 
-            const dist = (sog * (vectorMinutes / 60));
+            // Vector berekening blijft afhankelijk van knopen voor juiste nautische wiskunde op aarde, tenzij je lokaal wilt tonen. We houden de projectie op aarde intact.
+            const nautSog = isMetric ? (sog / 1.852) : sog;
+            const dist = (nautSog * (vectorMinutes / 60));
             const dest = calculateDestination(lat, lon, cog, dist);
             if (!vectorLine) vectorLine = L.polyline([[lat, lon], dest], {color: '#00FF00', weight: 4}).addTo(map);
             else vectorLine.setLatLngs([[lat, lon], dest]);
@@ -334,7 +371,6 @@
             }
         }
 
-        // --- BISECTRICE VECTOR DOORKRUISING ---
         function checkBisectorAuto(lat, lon, cog, sog) {
             if (activeWpIndex >= waypoints.length - 1) return;
             const pPrev = (activeWpIndex === 0 && shipPos) ? shipPos : [waypoints[activeWpIndex-1].lat, waypoints[activeWpIndex-1].lng];
@@ -344,23 +380,25 @@
             const b1 = getBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
             const b2 = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
             
-            const dist = (sog * (vectorMinutes / 60));
-            const dest = calculateDestination(lat, lon, cog, dist); // Vector Tip
+            const nautSog = isMetric ? (sog / 1.852) : sog;
+            const dist = (nautSog * (vectorMinutes / 60));
+            const dest = calculateDestination(lat, lon, cog, dist); 
 
-            // Functie die berekent of een punt aan de 'volgende' kant van de bisectrice ligt
             const isPast = (p) => {
                 let bisect = (b1 + b2) / 2 + 90;
                 const bearNext = getBearing(pCurr[0], pCurr[1], pNext[0], pNext[1]);
                 const bearP = getBearing(pCurr[0], pCurr[1], p[0], p[1]);
                 const normNext = Math.sin((bearNext - bisect) * Math.PI / 180);
                 const normP = Math.sin((bearP - bisect) * Math.PI / 180);
-                return (normNext * normP) > 0; // True als ze aan dezelfde kant van de lijn liggen
+                return (normNext * normP) > 0; 
             };
 
-            const distToWp = map.distance([lat, lon], pCurr) / 1852;
+            const distToWp = getDistance([lat, lon], pCurr);
+            // Threshold aangepast op eenheden
+            const nDist = isMetric ? distToWp * 0.539957 : distToWp;
             const thresholdDist = Math.max(1.0, dist + 0.5); 
             
-            if (distToWp < thresholdDist) {
+            if (nDist < thresholdDist) {
                 if (isPast(dest) || isPast([lat, lon])) {
                     activeWpIndex++;
                     playArrivalBeep();
@@ -376,7 +414,7 @@
                 return;
             }
             
-            let dtg = map.distance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]) / 1852;
+            let dtg = getDistance([lat, lon], [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
             document.getElementById('dtg-val').innerText = dtg.toFixed(1);
 
             if (sog > 0.2) {
@@ -420,9 +458,9 @@
                 
                 let wpEtaStr = "--:--";
                 if (shipPos && lastSog > 0.1) {
-                    let d = map.distance(shipPos, [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
-                    for (let j = activeWpIndex; j < i; j++) d += map.distance([waypoints[j].lat, waypoints[j].lng], [waypoints[j+1].lat, waypoints[j+1].lng]);
-                    const hoursWp = (d / 1852) / lastSog;
+                    let d = getDistance(shipPos, [waypoints[activeWpIndex].lat, waypoints[activeWpIndex].lng]);
+                    for (let j = activeWpIndex; j < i; j++) d += getDistance([waypoints[j].lat, waypoints[j].lng], [waypoints[j+1].lat, waypoints[j+1].lng]);
+                    const hoursWp = d / lastSog;
                     const etaWp = new Date(Date.now() + hoursWp * 3600000);
                     wpEtaStr = etaWp.getHours().toString().padStart(2, '0') + ":" + etaWp.getMinutes().toString().padStart(2, '0');
                 }
@@ -431,6 +469,10 @@
                     draggable: true,
                     icon: L.divIcon({ className: 'wp-icon', html: `<div style="width:12px; height:12px; background:${color}; border:2px solid white; border-radius:50%;"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] })
                 }).addTo(map);
+
+                m.on('dragstart', function() {
+                    saveHistoryState();
+                });
 
                 m.on('drag', function(e) {
                     waypoints[i].lat = e.target.getLatLng().lat;
@@ -471,11 +513,12 @@
                     const legColor = (i === activeWpIndex - 1) ? '#ff9f1c' : (i < activeWpIndex - 1 ? '#555' : 'red');
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: legColor, weight: 4}).addTo(map);
                     
-                l.on('click', function(e) {
-                    // We stoppen de klik hier zodat de kaart eronder geen extra waypoint aanmaakt
-                    L.DomEvent.stopPropagation(e); 
-                    insertWaypoint(i + 1, e.latlng);
-                });                    
+                    l.on('click', function(e) {
+                        L.DomEvent.stopPropagation(e); 
+                        saveHistoryState();
+                        insertWaypoint(i + 1, e.latlng);
+                    });
+                    
                     routeLines.push(l);
                 }
             });
@@ -513,7 +556,13 @@
         }
 
         window.setActiveWp = function(i) { activeWpIndex = i; updateRouteDisplay(); map.closePopup(); };
-        window.removeWaypoint = function(i) { waypoints.splice(i, 1); if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1); updateRouteDisplay(); map.closePopup(); };
+        window.removeWaypoint = function(i) { 
+            saveHistoryState();
+            waypoints.splice(i, 1); 
+            if (activeWpIndex >= waypoints.length) activeWpIndex = Math.max(0, waypoints.length - 1); 
+            updateRouteDisplay(); 
+            map.closePopup(); 
+        };
 
         function calculateDestination(lat, lon, brng, dist) {
             const R = 3440.065; const ad = dist / R;
@@ -539,6 +588,8 @@
             } else text = await file.text();
             const parser = new DOMParser(); const xml = parser.parseFromString(text, "text/xml");
             const wps = xml.getElementsByTagName("waypoint");
+            
+            saveHistoryState();
             waypoints = []; activeWpIndex = 0;
             for (let i = 0; i < wps.length; i++) {
                 const pos = wps[i].getElementsByTagName("position")[0];
@@ -548,7 +599,12 @@
         };
 
         window.nextActiveWP = function() { activeWpIndex = (activeWpIndex + 1) % waypoints.length; updateRouteDisplay(); };
-        window.clearRoute = function() { waypoints = []; activeWpIndex = 0; updateRouteDisplay(); };
+        window.clearRoute = function() { 
+            saveHistoryState();
+            waypoints = []; 
+            activeWpIndex = 0; 
+            updateRouteDisplay(); 
+        };
         
         window.saveRouteRTZ = async function() {
             if(waypoints.length === 0) return;
