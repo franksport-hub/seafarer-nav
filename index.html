@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
@@ -200,18 +200,12 @@
             if (shipPos) map.panTo(shipPos, { animate: true });
         }
 
-        let mapPressTimer;
-        map.on('mousedown touchstart', function(e) {
+        map.on('click', function(e) {
             if (!isCreatingRoute) return;
-            mapPressTimer = setTimeout(() => {
-                waypoints.push({lat: e.latlng.lat, lng: e.latlng.lng, note: ""});
-                updateRouteDisplay();
-            }, 1000);
+            waypoints.push({lat: e.latlng.lat, lng: e.latlng.lng, note: ""});
+            updateRouteDisplay();
         });
-        map.on('mouseup touchend mousemove touchmove', function() {
-            clearTimeout(mapPressTimer);
-        });
-
+        
         function formatGpsShort(lat, lon) {
             const latD = Math.floor(Math.abs(lat)), latM = ((Math.abs(lat) - latD) * 60).toFixed(2);
             const lonD = Math.floor(Math.abs(lon)), lonM = ((Math.abs(lon) - lonD) * 60).toFixed(2);
@@ -477,16 +471,11 @@
                     const legColor = (i === activeWpIndex - 1) ? '#ff9f1c' : (i < activeWpIndex - 1 ? '#555' : 'red');
                     const l = L.polyline([[wp.lat, wp.lng], [waypoints[i+1].lat, waypoints[i+1].lng]], {color: legColor, weight: 4}).addTo(map);
                     
-                    let linePressTimer;
-                    l.on('mousedown touchstart', function(e) {
-                        clearTimeout(mapPressTimer); 
-                        L.DomEvent.stopPropagation(e); 
-                        linePressTimer = setTimeout(() => {
-                            insertWaypoint(i + 1, e.latlng);
-                        }, 1000);
-                    });
-                    l.on('mouseup touchend mousemove touchmove', function() { clearTimeout(linePressTimer); });
-                    
+                l.on('click', function(e) {
+                    // We stoppen de klik hier zodat de kaart eronder geen extra waypoint aanmaakt
+                    L.DomEvent.stopPropagation(e); 
+                    insertWaypoint(i + 1, e.latlng);
+                });                    
                     routeLines.push(l);
                 }
             });
